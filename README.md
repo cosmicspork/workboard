@@ -19,6 +19,8 @@ The database is `$HOME/.local/share/workboard/workboard.sqlite3` by default. `--
 
 Options: `--port` changes the loopback port (default 4510), `--acli` chooses an executable (default `acli` on PATH), and `--jira-site` chooses the HTTPS Jira origin (default `https://example.atlassian.net`). Bind remains `127.0.0.1`; both `localhost` and `127.0.0.1` work in the browser. Each mutation must send an Origin matching its own Host, and other hosts are rejected. Use a different port if 4510 is occupied.
 
+The sidebar mark and favicon share `spa/public/workboard.svg`. `bun run --cwd spa icons` regenerates 16px/32px PNGs, a two-size `.ico`, and a 180px Apple touch icon from it. The SPA build runs this generator automatically; rebuild and reinstall the Rust executable after changing the SVG because assets are embedded.
+
 ## Daily use
 
 - Add standalone work with **Add task**, including a next action and optional HTTP(S) links. New work enters Inbox.

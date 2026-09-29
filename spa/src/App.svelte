@@ -127,7 +127,7 @@
 <svelte:head><title>{view === 'morning' ? 'Morning' : lanes.find(item => item.id === view)?.label} · Workboard</title></svelte:head>
 <div class="app-shell">
   <aside class="sidebar">
-    <a class="brand" href="#/morning" aria-label="Workboard home"><span class="brand-mark">w</span><span>workboard</span></a>
+    <a class="brand" href="#/morning" aria-label="Workboard home"><img class="brand-mark" src="/workboard.svg" alt="" width="29" height="29" /><span>workboard</span></a>
     <p class="nav-label">YOUR BOARD</p>
     <nav aria-label="Workboard views">
       {#each lanes as lane (lane.id)}
