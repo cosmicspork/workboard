@@ -13,11 +13,11 @@ cargo install --path . --locked
 workboard serve --port 4510
 ```
 
-Open `http://127.0.0.1:4510`. The server runs only while this command is running; it does not install a login item or background service. Build the frontend before compiling Rust: assets are embedded in the executable and a missing `spa/dist` fails compilation.
+Open `http://localhost:4510/` (or `http://127.0.0.1:4510/`). The server runs only while this command is running; it does not install a login item or background service. Build the frontend before compiling Rust: assets are embedded in the executable and a missing `spa/dist` fails compilation.
 
 The database is `$HOME/.local/share/workboard/workboard.sqlite3` by default. `--data-dir PATH` overrides `WORKBOARD_DATA_DIR`; both replace the default directory. The directory and database are private (0700/0600). Back up the database and its WAL sidecars together when the server is stopped. Migrations are versioned; a database from a newer application version is rejected instead of recreated.
 
-Options: `--port` changes the loopback port (default 4510), `--acli` chooses an executable (default `acli` on PATH), and `--jira-site` chooses the HTTPS Jira origin (default `https://example.atlassian.net`). Bind remains `127.0.0.1`; the browser must use the printed URL, not `localhost`, because Host and Origin are checked. Use a different port if 4510 is occupied.
+Options: `--port` changes the loopback port (default 4510), `--acli` chooses an executable (default `acli` on PATH), and `--jira-site` chooses the HTTPS Jira origin (default `https://example.atlassian.net`). Bind remains `127.0.0.1`; both `localhost` and `127.0.0.1` work in the browser. Each mutation must send an Origin matching its own Host, and other hosts are rejected. Use a different port if 4510 is occupied.
 
 ## Daily use
 

@@ -257,18 +257,23 @@ async fn fallback(uri: Uri) -> Response {
 
 async fn guard(State(app): State<App>, request: Request, next: Next) -> Response {
     let is_api = request.uri().path().starts_with("/api");
-    let host = app.origin.strip_prefix("http://").unwrap_or("");
-    let allowed_host = request
+    let ipv4_host = app.origin.strip_prefix("http://").unwrap_or("");
+    let port = ipv4_host.strip_prefix("127.0.0.1:").unwrap_or("");
+    let host = request
         .headers()
         .get(header::HOST)
-        .and_then(|v| v.to_str().ok())
-        == Some(host);
+        .and_then(|v| v.to_str().ok());
+    let ipv4 = host == Some(ipv4_host);
+    let localhost = host.and_then(|value| value.strip_prefix("localhost:")) == Some(port);
+    let allowed_host = ipv4 || localhost;
     let mutation = !matches!(*request.method(), Method::GET | Method::HEAD);
-    let allowed_origin = request
+    let origin = request
         .headers()
         .get(header::ORIGIN)
-        .and_then(|v| v.to_str().ok())
-        == Some(app.origin.as_str());
+        .and_then(|v| v.to_str().ok());
+    let allowed_origin = (ipv4 && origin == Some(app.origin.as_str()))
+        || (localhost
+            && origin.and_then(|value| value.strip_prefix("http://localhost:")) == Some(port));
     let foreign_origin = request.headers().contains_key(header::ORIGIN) && !allowed_origin;
     let mut response = if !allowed_host || foreign_origin || (mutation && !allowed_origin) {
         error(

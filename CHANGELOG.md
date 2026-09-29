@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Accept `http://localhost:<port>/` alongside the IPv4 loopback URL, while requiring matching Host and Origin on mutations.
+
 ## 0.1.0
 
 - Standalone local Rust/Svelte morning board with durable private SQLite tasks and reversible personal states.

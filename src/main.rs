@@ -74,7 +74,10 @@ async fn main() -> Result<()> {
                 origin: origin.clone(),
                 refresh_in_progress: Arc::new(AtomicBool::new(false)),
             };
-            println!("Workboard: {origin}");
+            println!(
+                "Workboard: http://localhost:{}",
+                listener.local_addr()?.port()
+            );
             axum::serve(listener, http::router(app))
                 .with_graceful_shutdown(async {
                     let _ = tokio::signal::ctrl_c().await;
