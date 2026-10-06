@@ -53,7 +53,8 @@ async fn localhost_and_ipv4_are_independent_same_origin_hosts() {
     let app = App {
         store,
         site,
-        acli: "acli".into(),
+        tracon: Url::parse("http://127.0.0.1:9").unwrap(),
+        jira_channel: "work".into(),
         origin: format!("http://127.0.0.1:{port}"),
         refresh_in_progress: Arc::new(AtomicBool::new(false)),
     };
@@ -122,5 +123,76 @@ async fn localhost_and_ipv4_are_independent_same_origin_hosts() {
     let (status, board) = request(port, "GET", &localhost, None, "/api/board", "").await;
     assert_eq!(status, 200);
     assert_eq!(board["tasks"].as_array().unwrap().len(), 2);
+
+    let (status, project) = request(
+        port,
+        "POST",
+        &localhost,
+        Some(&local_origin),
+        "/api/projects",
+        r#"{"name":"Kubernetes","jira_keys":["app-264"]}"#,
+    )
+    .await;
+    assert_eq!(status, 201);
+    assert_eq!(project["jira_keys"][0], "APP-264");
+    let project_id = project["id"].as_str().unwrap();
+    let (status, _) = request(
+        port,
+        "POST",
+        &localhost,
+        None,
+        "/api/projects",
+        r#"{"name":"No origin"}"#,
+    )
+    .await;
+    assert_eq!(status, 403);
+    let items = board["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| serde_json::json!({"id": t["id"], "version": t["version"]}))
+        .collect::<Vec<_>>();
+    let (status, assigned) = request(
+        port,
+        "POST",
+        &localhost,
+        Some(&local_origin),
+        "/api/tasks/project",
+        &serde_json::json!({"items": items, "project_id": project_id}).to_string(),
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(assigned[0]["project_source"], "manual");
+    let task = &assigned[0];
+    let (status, tagged) = request(
+        port,
+        "PUT",
+        &localhost,
+        Some(&local_origin),
+        &format!("/api/tasks/{}", task["id"].as_str().unwrap()),
+        &serde_json::json!({
+            "version": task["version"], "title_override": task["title_override"],
+            "next_action": "", "notes": "", "state": "next", "today": false,
+            "waiting_for": null, "review_on": null, "links": [],
+            "project_id": project_id, "tags": ["person:sam"]
+        })
+        .to_string(),
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(tagged["tags"][0], "person:sam");
+    let (status, error) = request(
+        port,
+        "DELETE",
+        &localhost,
+        Some(&local_origin),
+        &format!("/api/projects/{project_id}"),
+        r#"{"version":99}"#,
+    )
+    .await;
+    assert_eq!(status, 409);
+    assert_eq!(error["error"], "task_conflict");
+    let (_, board) = request(port, "GET", &localhost, None, "/api/board", "").await;
+    assert_eq!(board["projects"][0]["name"], "Kubernetes");
     server.abort();
 }

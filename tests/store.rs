@@ -2,7 +2,8 @@ use std::sync::Arc;
 use tempfile::TempDir;
 use url::Url;
 use workboard::model::{
-    CreateTask, Identity, Link, SourceIssue, TriageInput, UpdateTask, VersionedId,
+    AssignProject, CreateProject, CreateTask, Identity, Link, ParentIssue, SourceIssue,
+    TriageInput, UpdateProject, UpdateTask, VersionedId,
 };
 use workboard::store::{Store, StoreError};
 
@@ -24,6 +25,8 @@ fn issue(id: &str, key: &str, category: &str, summary: &str) -> SourceIssue {
         status_category: category.into(),
         priority: Some("Planned".into()),
         issue_type: Some("Task".into()),
+        labels: vec![],
+        parent: None,
     }
 }
 fn identity() -> Identity {
@@ -44,6 +47,8 @@ fn create(store: &Store, title: &str) -> workboard::model::Task {
             next_action: String::new(),
             notes: String::new(),
             links: vec![],
+            project_id: None,
+            tags: vec![],
         })
         .unwrap()
 }
@@ -58,6 +63,8 @@ fn update(task: &workboard::model::Task, state: &str, today: bool) -> UpdateTask
         waiting_for: task.waiting_for.clone(),
         review_on: task.review_on.clone(),
         links: task.links.clone(),
+        project_id: task.project_id.clone(),
+        tags: task.tags.clone(),
     }
 }
 
@@ -159,6 +166,8 @@ fn refresh_preserves_personal_data_updates_unoverridden_title_and_marks_absent()
                 waiting_for: None,
                 review_on: None,
                 links: vec![],
+                project_id: None,
+                tags: vec![],
             },
         )
         .unwrap();
@@ -406,4 +415,273 @@ fn concurrent_versioned_writes_allow_only_one_winner() {
             .count(),
         1
     );
+}
+
+fn project(store: &Store, name: &str, keys: &[&str]) -> workboard::model::Project {
+    store
+        .create_project(CreateProject {
+            name: name.into(),
+            target_on: None,
+            jira_keys: keys.iter().map(|k| k.to_string()).collect(),
+        })
+        .unwrap()
+}
+fn new_project(name: &str, keys: &[&str]) -> CreateProject {
+    CreateProject {
+        name: name.into(),
+        target_on: None,
+        jira_keys: keys.iter().map(|k| k.to_string()).collect(),
+    }
+}
+fn child(id: &str, key: &str, parent: &str) -> SourceIssue {
+    SourceIssue {
+        labels: vec!["Phase-3".into()],
+        parent: Some(ParentIssue {
+            key: parent.into(),
+            summary: Some("Epic summary".into()),
+            issue_type: Some("Epic".into()),
+        }),
+        ..issue(id, key, "new", key)
+    }
+}
+fn task_for<'a>(board: &'a workboard::model::Board, key: &str) -> &'a workboard::model::Task {
+    board
+        .tasks
+        .iter()
+        .find(|t| t.jira.as_ref().is_some_and(|j| j.key == key))
+        .unwrap()
+}
+fn versioned(task: &workboard::model::Task) -> VersionedId {
+    VersionedId {
+        id: task.id.clone(),
+        version: task.version,
+    }
+}
+
+#[test]
+fn version_one_database_migrates_without_losing_tasks() {
+    let dir = tempfile::tempdir().unwrap();
+    let connection = rusqlite::Connection::open(dir.path().join("workboard.sqlite3")).unwrap();
+    connection.execute_batch("CREATE TABLE jira_issues(id TEXT PRIMARY KEY,key TEXT NOT NULL,summary TEXT NOT NULL,status_name TEXT NOT NULL,status_category TEXT NOT NULL CHECK(status_category IN ('new','indeterminate','done')),priority TEXT,issue_type TEXT,last_seen_at TEXT NOT NULL,present_in_latest INTEGER NOT NULL CHECK(present_in_latest IN (0,1))); CREATE TABLE tasks(id TEXT PRIMARY KEY,jira_issue_id TEXT UNIQUE REFERENCES jira_issues(id),title_override TEXT,next_action TEXT NOT NULL DEFAULT '',notes TEXT NOT NULL DEFAULT '',state TEXT NOT NULL CHECK(state IN ('inbox','next','waiting','later','done')),today INTEGER NOT NULL DEFAULT 0 CHECK(today IN (0,1)),waiting_for TEXT,review_on TEXT,links_json TEXT NOT NULL DEFAULT '[]',created_at TEXT NOT NULL,updated_at TEXT NOT NULL,version INTEGER NOT NULL DEFAULT 1 CHECK(version>0),CHECK(today=0 OR state='next'),CHECK(jira_issue_id IS NOT NULL OR (title_override IS NOT NULL AND length(trim(title_override))>0))); CREATE TABLE jira_sync(singleton INTEGER PRIMARY KEY CHECK(singleton=1),site TEXT,account_email TEXT,last_attempt_at TEXT,last_success_at TEXT,error_code TEXT,issue_count INTEGER NOT NULL DEFAULT 0,open_count INTEGER NOT NULL DEFAULT 0,done_count INTEGER NOT NULL DEFAULT 0); INSERT INTO jira_sync(singleton,site,account_email) VALUES(1,'example.atlassian.net','user@example.test'); INSERT INTO jira_issues VALUES('9','A-9','Old','Open','new',NULL,NULL,'2026-09-29T08:00:00Z',1); INSERT INTO tasks(id,jira_issue_id,state,waiting_for,review_on,created_at,updated_at,version) VALUES('t1','9','waiting','UAT','2026-10-05','2026-09-29T08:00:00Z','2026-09-29T08:00:00Z',3); INSERT INTO tasks(id,title_override,state,created_at,updated_at) VALUES('t2','Manual','later','2026-09-29T09:00:00Z','2026-09-29T09:00:00Z'); PRAGMA user_version=1;").unwrap();
+    drop(connection);
+    let site = Url::parse("https://example.atlassian.net").unwrap();
+    let store = Store::init(dir.path(), &site).unwrap();
+    let board = store.board("2026-10-06".into(), false).unwrap();
+    assert_eq!(board.tasks.len(), 2);
+    let waiting = board.tasks.iter().find(|t| t.id == "t1").unwrap();
+    assert_eq!(waiting.waiting_for.as_deref(), Some("UAT"));
+    assert_eq!(waiting.version, 3);
+    assert!(waiting.jira.as_ref().unwrap().labels.is_empty());
+    assert!(waiting.tags.is_empty());
+    assert_eq!(
+        store.sync().unwrap().account_email.as_deref(),
+        Some("user@example.test")
+    );
+    drop(store);
+    Store::init(dir.path(), &site).unwrap();
+}
+
+#[test]
+fn newer_schema_is_rejected() {
+    let dir = tempfile::tempdir().unwrap();
+    let connection = rusqlite::Connection::open(dir.path().join("workboard.sqlite3")).unwrap();
+    connection.execute_batch("PRAGMA user_version=99;").unwrap();
+    drop(connection);
+    let site = Url::parse("https://example.atlassian.net").unwrap();
+    assert!(Store::init(dir.path(), &site).is_err());
+}
+
+#[test]
+fn effective_project_prefers_manual_then_issue_then_parent_then_prefix() {
+    let (_dir, store) = setup();
+    let catch_all = project(&store, "App tickets", &["app"]);
+    let k8s = project(&store, "Kubernetes", &["APP-264"]);
+    let direct = project(&store, "Direct", &["APP-300"]);
+    refresh(
+        &store,
+        &[
+            child("1", "APP-266", "APP-264"),
+            issue("2", "APP-5", "new", "Loose"),
+            child("3", "APP-300", "APP-264"),
+            issue("4", "WEB-1", "new", "Elsewhere"),
+        ],
+    );
+    let board = store.board("2026-10-06".into(), false).unwrap();
+    let k8s_child = task_for(&board, "APP-266");
+    assert_eq!(k8s_child.effective_project_id.as_ref(), Some(&k8s.id));
+    assert_eq!(k8s_child.project_source.as_deref(), Some("jira"));
+    assert_eq!(k8s_child.project_id, None);
+    assert_eq!(
+        k8s_child.jira_tags,
+        vec!["jira:app", "epic:app-264", "label:phase-3"]
+    );
+    assert_eq!(
+        task_for(&board, "APP-5").effective_project_id.as_ref(),
+        Some(&catch_all.id)
+    );
+    assert_eq!(
+        task_for(&board, "APP-300").effective_project_id.as_ref(),
+        Some(&direct.id)
+    );
+    assert_eq!(task_for(&board, "WEB-1").effective_project_id, None);
+    assert_eq!(
+        board
+            .projects
+            .iter()
+            .map(|p| p.name.as_str())
+            .collect::<Vec<_>>(),
+        ["App tickets", "Kubernetes", "Direct"]
+    );
+
+    let mut manual = update(k8s_child, "next", false);
+    manual.project_id = Some(catch_all.id.clone());
+    let manual = store.update(&k8s_child.id, manual).unwrap();
+    assert_eq!(manual.effective_project_id.as_ref(), Some(&catch_all.id));
+    assert_eq!(manual.project_source.as_deref(), Some("manual"));
+}
+
+#[test]
+fn refresh_keeps_user_tags_and_manual_projects() {
+    let (_dir, store) = setup();
+    let chosen = project(&store, "Chosen", &[]);
+    project(&store, "From Jira", &["A"]);
+    refresh(&store, &[issue("1", "A-1", "new", "One")]);
+    let task = store
+        .board("2026-10-06".into(), false)
+        .unwrap()
+        .tasks
+        .remove(0);
+    let mut input = update(&task, "next", false);
+    input.project_id = Some(chosen.id.clone());
+    input.tags = vec!["Person:Sam".into(), "kind:ops".into(), "kind:ops".into()];
+    let saved = store.update(&task.id, input).unwrap();
+    assert_eq!(saved.tags, vec!["person:sam", "kind:ops"]);
+    refresh(&store, &[child("1", "A-1", "A-0")]);
+    let current = store
+        .board("2026-10-06".into(), false)
+        .unwrap()
+        .tasks
+        .remove(0);
+    assert_eq!(current.tags, vec!["person:sam", "kind:ops"]);
+    assert_eq!(current.effective_project_id.as_ref(), Some(&chosen.id));
+    assert_eq!(current.version, saved.version);
+    assert_eq!(
+        current.jira.as_ref().unwrap().parent.as_ref().unwrap().key,
+        "A-0"
+    );
+}
+
+#[test]
+fn tags_are_validated() {
+    let (_dir, store) = setup();
+    let task = create(&store, "Tagged");
+    for bad in ["has space", "a:b:c", ":value", "key:", "-lead", "emoji✓"] {
+        let mut input = update(&task, "inbox", false);
+        input.tags = vec![bad.into()];
+        assert!(
+            matches!(store.update(&task.id, input), Err(StoreError::Invalid(_))),
+            "{bad}"
+        );
+    }
+    let mut input = update(&task, "inbox", false);
+    input.tags = (0..21).map(|i| format!("t{i}")).collect();
+    assert!(matches!(
+        store.update(&task.id, input),
+        Err(StoreError::Invalid(_))
+    ));
+    let created = store
+        .create(CreateTask {
+            title: "With tags".into(),
+            next_action: String::new(),
+            notes: String::new(),
+            links: vec![],
+            project_id: None,
+            tags: vec!["repo:field-transliterator".into(), "quick".into()],
+        })
+        .unwrap();
+    assert_eq!(created.tags, vec!["repo:field-transliterator", "quick"]);
+}
+
+#[test]
+fn projects_reorder_update_conflict_and_delete_unassigns_tasks() {
+    let (_dir, store) = setup();
+    let a = project(&store, "A", &["APP"]);
+    let b = project(&store, "B", &[]);
+    let c = project(&store, "C", &[]);
+    for bad in [
+        new_project("a", &[]),
+        new_project("D", &["app"]),
+        new_project("E", &["not a key"]),
+    ] {
+        assert!(matches!(
+            store.create_project(bad),
+            Err(StoreError::Invalid(_))
+        ));
+    }
+    let ordered = store
+        .order_projects(&[c.id.clone(), a.id.clone(), b.id.clone()])
+        .unwrap();
+    assert_eq!(
+        ordered.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
+        ["C", "A", "B"]
+    );
+    assert!(matches!(
+        store.order_projects(&[c.id.clone(), a.id.clone()]),
+        Err(StoreError::Invalid(_))
+    ));
+    let renamed = store
+        .update_project(
+            &b.id,
+            UpdateProject {
+                version: b.version,
+                name: "Bee".into(),
+                target_on: Some("2026-10-31".into()),
+                jira_keys: vec!["web-22".into()],
+            },
+        )
+        .unwrap();
+    assert_eq!(renamed.jira_keys, vec!["WEB-22"]);
+    assert!(matches!(
+        store.update_project(
+            &b.id,
+            UpdateProject {
+                version: b.version,
+                name: "Stale".into(),
+                target_on: None,
+                jira_keys: vec![],
+            }
+        ),
+        Err(StoreError::Conflict)
+    ));
+    let task = create(&store, "Assigned");
+    let other = create(&store, "Also");
+    let assigned = store
+        .assign_project(AssignProject {
+            items: vec![versioned(&task), versioned(&other)],
+            project_id: Some(renamed.id.clone()),
+        })
+        .unwrap();
+    assert!(
+        assigned
+            .iter()
+            .all(|t| t.project_id.as_ref() == Some(&renamed.id))
+    );
+    assert!(matches!(
+        store.assign_project(AssignProject {
+            items: vec![versioned(&task)],
+            project_id: None,
+        }),
+        Err(StoreError::Conflict)
+    ));
+    assert!(matches!(
+        store.delete_project(&renamed.id, b.version),
+        Err(StoreError::Conflict)
+    ));
+    store.delete_project(&renamed.id, renamed.version).unwrap();
+    let board = store.board("2026-10-06".into(), false).unwrap();
+    assert_eq!(board.projects.len(), 2);
+    let unassigned = board.tasks.iter().find(|t| t.id == task.id).unwrap();
+    assert_eq!(unassigned.project_id, None);
+    assert_eq!(unassigned.version, assigned[0].version + 1);
+    assert_eq!(project(&store, "Fresh", &[]).position, 3);
 }

@@ -19,7 +19,10 @@ use url::Url;
 
 use crate::{
     jira,
-    model::{CreateTask, TriageInput, UpdateTask},
+    model::{
+        AssignProject, CreateProject, CreateTask, DeleteProject, ProjectOrder, TriageInput,
+        UpdateProject, UpdateTask,
+    },
     store::{Store, StoreError},
 };
 
@@ -27,7 +30,8 @@ use crate::{
 pub struct App {
     pub store: Arc<Store>,
     pub site: Url,
-    pub acli: String,
+    pub tracon: Url,
+    pub jira_channel: String,
     pub origin: String,
     pub refresh_in_progress: Arc<AtomicBool>,
 }
@@ -55,16 +59,16 @@ fn store_error(err: StoreError) -> Response {
         StoreError::Invalid(_) => {
             error(StatusCode::BAD_REQUEST, "invalid_request", &err.to_string())
         }
-        StoreError::NotFound => error(StatusCode::NOT_FOUND, "not_found", "Task not found."),
+        StoreError::NotFound => error(StatusCode::NOT_FOUND, "not_found", "Not found."),
         StoreError::Conflict => error(
             StatusCode::CONFLICT,
             "task_conflict",
-            "Task changed. Reload it before saving.",
+            "This changed elsewhere. Reload it before saving.",
         ),
         StoreError::IdentityChanged => error(
             StatusCode::BAD_GATEWAY,
             "jira_identity_changed",
-            "The Jira CLI account or site changed. Select the intended account.",
+            "Tracon's Jira account or site changed from the one this board is bound to.",
         ),
         StoreError::Internal(_) => internal(),
     }
@@ -148,6 +152,73 @@ async fn triage(
         .map_err(store_error)
 }
 
+async fn assign_project(
+    State(app): State<App>,
+    bytes: Result<Bytes, BytesRejection>,
+) -> ApiResult<Vec<crate::model::Task>> {
+    let bytes = body(bytes)?;
+    let input: AssignProject = parse(&bytes)?;
+    let store = app.store.clone();
+    blocking(move || store.assign_project(input))
+        .await?
+        .map(Json)
+        .map_err(store_error)
+}
+
+async fn create_project(
+    State(app): State<App>,
+    bytes: Result<Bytes, BytesRejection>,
+) -> Result<(StatusCode, Json<crate::model::Project>), Response> {
+    let bytes = body(bytes)?;
+    let input: CreateProject = parse(&bytes)?;
+    let store = app.store.clone();
+    let project = blocking(move || store.create_project(input))
+        .await?
+        .map_err(store_error)?;
+    Ok((StatusCode::CREATED, Json(project)))
+}
+
+async fn update_project(
+    State(app): State<App>,
+    Path(id): Path<String>,
+    bytes: Result<Bytes, BytesRejection>,
+) -> ApiResult<crate::model::Project> {
+    let bytes = body(bytes)?;
+    let input: UpdateProject = parse(&bytes)?;
+    let store = app.store.clone();
+    blocking(move || store.update_project(&id, input))
+        .await?
+        .map(Json)
+        .map_err(store_error)
+}
+
+async fn delete_project(
+    State(app): State<App>,
+    Path(id): Path<String>,
+    bytes: Result<Bytes, BytesRejection>,
+) -> Result<StatusCode, Response> {
+    let bytes = body(bytes)?;
+    let input: DeleteProject = parse(&bytes)?;
+    let store = app.store.clone();
+    blocking(move || store.delete_project(&id, input.version))
+        .await?
+        .map_err(store_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn order_projects(
+    State(app): State<App>,
+    bytes: Result<Bytes, BytesRejection>,
+) -> ApiResult<Vec<crate::model::Project>> {
+    let bytes = body(bytes)?;
+    let input: ProjectOrder = parse(&bytes)?;
+    let store = app.store.clone();
+    blocking(move || store.order_projects(&input.ids))
+        .await?
+        .map(Json)
+        .map_err(store_error)
+}
+
 struct RefreshGuard(Arc<AtomicBool>);
 impl Drop for RefreshGuard {
     fn drop(&mut self) {
@@ -185,7 +256,7 @@ async fn refresh(
         .await?
         .map_err(|_| internal())?;
     let bound = sync.site.as_deref().zip(sync.account_email.as_deref());
-    let outcome = jira::fetch(&app.acli, &app.site, bound).await;
+    let outcome = jira::fetch(&app.tracon, &app.jira_channel, &app.site, bound).await;
     let now = chrono::Utc::now().to_rfc3339();
     match outcome {
         Ok((identity, issues)) => {
@@ -321,7 +392,14 @@ pub fn router(app: App) -> Router {
         .route("/api/board", get(board))
         .route("/api/tasks", post(create))
         .route("/api/tasks/triage", post(triage))
+        .route("/api/tasks/project", post(assign_project))
         .route("/api/tasks/{id}", put(update))
+        .route("/api/projects", post(create_project))
+        .route("/api/projects/order", post(order_projects))
+        .route(
+            "/api/projects/{id}",
+            put(update_project).delete(delete_project),
+        )
         .route("/api/jira/refresh", post(refresh))
         .fallback(fallback)
         .route("/", get(asset))

@@ -17,8 +17,10 @@ use workboard::{
 struct Cli {
     #[arg(long, global = true, env = "WORKBOARD_DATA_DIR")]
     data_dir: Option<PathBuf>,
-    #[arg(long, global = true, default_value = "acli")]
-    acli: String,
+    #[arg(long, global = true, default_value = "http://127.0.0.1:7420")]
+    tracon_url: String,
+    #[arg(long, global = true, default_value = "work")]
+    jira_channel: String,
     #[arg(long, global = true, default_value = "https://example.atlassian.net")]
     jira_site: String,
     #[command(subcommand)]
@@ -48,10 +50,35 @@ fn site(raw: &str) -> Result<Url> {
     Ok(url)
 }
 
+fn tracon(raw: &str) -> Result<Url> {
+    let url = Url::parse(raw).context("invalid Tracon URL")?;
+    let loopback = match url.host() {
+        Some(url::Host::Domain(host)) => host.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    };
+    if url.scheme() != "http"
+        || !loopback
+        || url.username() != ""
+        || url.password().is_some()
+        || url.path() != "/"
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        bail!("Tracon URL must be a plain http:// loopback origin, such as http://127.0.0.1:7420");
+    }
+    Ok(url)
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     let jira_site = site(&cli.jira_site)?;
+    let tracon_url = tracon(&cli.tracon_url)?;
+    if cli.jira_channel.trim().is_empty() {
+        bail!("Jira channel must not be empty");
+    }
     let data_dir = match cli.data_dir {
         Some(dir) => dir,
         None => PathBuf::from(
@@ -70,7 +97,8 @@ async fn main() -> Result<()> {
             let app = App {
                 store,
                 site: jira_site,
-                acli: cli.acli,
+                tracon: tracon_url,
+                jira_channel: cli.jira_channel,
                 origin: origin.clone(),
                 refresh_in_progress: Arc::new(AtomicBool::new(false)),
             };
@@ -91,7 +119,7 @@ async fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::site;
+    use super::{site, tracon};
     #[test]
     fn jira_site_is_an_origin() {
         assert!(site("https://example.atlassian.net").is_ok());
@@ -102,6 +130,24 @@ mod tests {
             "https://example.atlassian.net/?a=1",
         ] {
             assert!(site(raw).is_err(), "{raw}");
+        }
+    }
+    #[test]
+    fn tracon_url_is_a_loopback_origin() {
+        for raw in [
+            "http://127.0.0.1:7420",
+            "http://localhost:7420",
+            "http://[::1]:7420",
+        ] {
+            assert!(tracon(raw).is_ok(), "{raw}");
+        }
+        for raw in [
+            "https://127.0.0.1:7420",
+            "http://example.com:7420",
+            "http://127.0.0.1:7420/api",
+            "http://user@127.0.0.1:7420",
+        ] {
+            assert!(tracon(raw).is_err(), "{raw}");
         }
     }
 }
