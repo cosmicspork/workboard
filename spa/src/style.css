@@ -943,3 +943,117 @@ select:focus-visible {
     white-space: nowrap;
   }
 }
+.tag-filter {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: -8px 0 18px;
+}
+.tag-input {
+  flex: 1;
+  min-width: 160px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px dashed #d7ddd8;
+  border-radius: 6px;
+  background: transparent;
+  font-size: 11px;
+}
+.text-button {
+  background: transparent;
+  color: #416b58;
+  font-size: 11px;
+  font-weight: 600;
+}
+.task-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 8px;
+}
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 999px;
+  padding: 3px 9px;
+  background: var(--green-soft);
+  color: var(--green);
+  font-size: 10px;
+  font-weight: 600;
+}
+.tag-chip:hover {
+  background: #dce9e1;
+}
+.jira-chip {
+  background: #f2f4f1;
+  color: #737e78;
+  font-weight: 500;
+}
+.active-chip button {
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+  line-height: 1;
+}
+.project-tag {
+  border-radius: 5px;
+  padding: 3px 7px;
+  background: var(--green-soft);
+  color: var(--green);
+  font-size: 10px;
+  font-weight: 600;
+}
+.project-group {
+  margin: 0 0 26px;
+}
+.project-list {
+  list-style: none;
+  margin: 0 0 22px;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.project-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.project-rank {
+  min-width: 22px;
+  color: var(--orange);
+  font-weight: 700;
+  font-size: 15px;
+}
+.project-main,
+.project-edit {
+  flex: 1;
+  min-width: 0;
+}
+.project-row .icon-button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.field-hint {
+  margin: -6px 0 12px;
+  color: #8a938e;
+  font-size: 11px;
+  line-height: 1.5;
+}
+@media (max-width: 650px) {
+  .project-row {
+    flex-wrap: wrap;
+  }
+  .project-row .row-trailing {
+    width: 100%;
+    justify-content: flex-end;
+  }
+  .tag-input {
+    min-width: 0;
+  }
+}

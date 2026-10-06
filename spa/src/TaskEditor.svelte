@@ -1,10 +1,12 @@
 <script lang="ts">
-  import { ApiError, type Link, type State, type Task, type UpdateTask } from './lib/api';
+  import { ApiError, type Link, type Project, type State, type Task, type UpdateTask } from './lib/api';
+  import { parseTags } from './lib/views';
 
   export let task: Task;
   export let onSave: (input: UpdateTask) => Promise<void>;
   export let onCancel: () => void;
   export let onReload: () => Promise<Task | undefined>;
+  export let projects: Project[] = [];
   let titleOverride = task.title_override ?? (task.jira ? '' : task.title);
   let nextAction = task.next_action;
   let notes = task.notes;
@@ -13,11 +15,14 @@
   let waitingFor = task.waiting_for ?? '';
   let reviewOn = task.review_on ?? '';
   let links: Link[] = task.links.map(link => ({ ...link }));
+  let projectId = task.project_id ?? '';
+  let tags = task.tags.join(', ');
   let busy = false;
   let error = '';
   let conflict = false;
   let editVersion = task.version;
 
+  $: derivedProject = task.project_source === 'jira' ? projects.find(project => project.id === task.effective_project_id) : undefined;
   function addLink() { links = [...links, { label: '', url: '' }]; }
   function removeLink(index: number) { links = links.filter((_, itemIndex) => itemIndex !== index); }
   function changeState(value: string) {
@@ -39,7 +44,9 @@
         today: state === 'next' && today,
         waiting_for: state === 'waiting' && waitingFor.trim() ? waitingFor : null,
         review_on: (state === 'waiting' || state === 'later') ? (reviewOn || null) : null,
-        links: links.filter(link => link.url.trim())
+        links: links.filter(link => link.url.trim()),
+        project_id: projectId || null,
+        tags: parseTags(tags)
       });
     } catch (reason) {
       conflict = reason instanceof ApiError && reason.code === 'task_conflict';
@@ -58,6 +65,8 @@
     waitingFor = fresh.waiting_for ?? '';
     reviewOn = fresh.review_on ?? '';
     links = fresh.links.map(link => ({ ...link }));
+    projectId = fresh.project_id ?? '';
+    tags = fresh.tags.join(', ');
     error = '';
     conflict = false;
   }
@@ -74,6 +83,11 @@
     {#if state === 'waiting'}<label>Waiting for<input bind:value={waitingFor} maxlength="500" /></label>{/if}
     {#if state === 'waiting' || state === 'later'}<label>Review on<input type="date" bind:value={reviewOn} /></label>{/if}
   </div>
+  <div class="form-grid">
+    <label>Project<select bind:value={projectId}><option value="">{derivedProject ? `Automatic (from Jira: ${derivedProject.name})` : 'No project'}</option>{#each projects as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label>
+    <label>Tags<input bind:value={tags} maxlength="1400" placeholder="person:sam, kind:ops" /></label>
+  </div>
+  {#if task.jira_tags.length}<p class="field-hint">From Jira: {task.jira_tags.join(', ')}</p>{/if}
   <label>Notes<textarea bind:value={notes} maxlength="16384" rows="5"></textarea></label>
   <fieldset><legend>Links</legend>
     {#each links as link, index (index)}
