@@ -21,8 +21,8 @@ struct Cli {
     tracon_url: String,
     #[arg(long, global = true, default_value = "work")]
     jira_channel: String,
-    #[arg(long, global = true, default_value = "https://example.atlassian.net")]
-    jira_site: String,
+    #[arg(long, global = true, env = "WORKBOARD_JIRA_SITE")]
+    jira_site: Option<String>,
     #[command(subcommand)]
     command: Command,
 }
@@ -74,7 +74,11 @@ fn tracon(raw: &str) -> Result<Url> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    let jira_site = site(&cli.jira_site)?;
+    let jira_site = site(
+        cli.jira_site
+            .as_deref()
+            .context("--jira-site or WORKBOARD_JIRA_SITE is required")?,
+    )?;
     let tracon_url = tracon(&cli.tracon_url)?;
     if cli.jira_channel.trim().is_empty() {
         bail!("Jira channel must not be empty");

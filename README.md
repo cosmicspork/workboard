@@ -10,14 +10,14 @@ Requires Rust/Cargo and Bun for building. Jira refresh goes through a local [Tra
 bun install --cwd spa
 bun run --cwd spa build
 cargo install --path . --locked
-workboard serve --port 4510
+workboard serve --port 4510 --jira-site https://your-site.atlassian.net
 ```
 
 Open `http://localhost:4510/` (or `http://127.0.0.1:4510/`). The server runs only while this command is running; it does not install a login item or background service. Build the frontend before compiling Rust: assets are embedded in the executable and a missing `spa/dist` fails compilation.
 
 The database is `$HOME/.local/share/workboard/workboard.sqlite3` by default. `--data-dir PATH` overrides `WORKBOARD_DATA_DIR`; both replace the default directory. The directory and database are private (0700/0600). Back up the database and its WAL sidecars together when the server is stopped. Migrations are versioned; a database from a newer application version is rejected instead of recreated.
 
-Options: `--port` changes the loopback port (default 4510), `--tracon-url` chooses the Tracon node (default `http://127.0.0.1:7420`; it must be a loopback `http://` origin), `--jira-channel` chooses the Tracon channel whose Jira credential is used (default `work`), and `--jira-site` chooses the HTTPS Jira origin (default `https://example.atlassian.net`). Bind remains `127.0.0.1`; both `localhost` and `127.0.0.1` work in the browser. Each mutation must send an Origin matching its own Host, and other hosts are rejected. Use a different port if 4510 is occupied.
+Options: `--port` changes the loopback port (default 4510), `--tracon-url` chooses the Tracon node (default `http://127.0.0.1:7420`; it must be a loopback `http://` origin), `--jira-channel` chooses the Tracon channel whose Jira credential is used (default `work`), and `--jira-site` (or `WORKBOARD_JIRA_SITE`) sets your HTTPS Jira origin, such as `https://example.atlassian.net`; it has no default. Bind remains `127.0.0.1`; both `localhost` and `127.0.0.1` work in the browser. Each mutation must send an Origin matching its own Host, and other hosts are rejected. Use a different port if 4510 is occupied.
 
 The sidebar mark and favicon share `spa/public/workboard.svg`. `bun run --cwd spa icons` regenerates 16px/32px PNGs, a two-size `.ico`, and a 180px Apple touch icon from it. The SPA build runs this generator automatically; rebuild and reinstall the Rust executable after changing the SVG because assets are embedded.
 
@@ -32,6 +32,10 @@ The sidebar mark and favicon share `spa/public/workboard.svg`. `bun run --cwd sp
 - Edit the personal title to override an imported Jira summary; clear it to follow the source title again. Links are displayed as text and open in a separate tab without background fetching. Add Jira, MR, Tracon, or communications links manually as needed.
 
 Refresh pages through Tracon's `GET /api/jira/search`, which Tracon serves to loopback callers without a token. The Jira site and account Tracon reports are bound at the first successful refresh. A changed identity, a stopped or older Tracon node, a missing channel credential, a timeout, or a malformed response leaves prior snapshots and decisions intact and displays a recovery message. Configure the Jira credential in Tracon, not here. No background Jira polling occurs.
+
+## License
+
+[MIT](LICENSE)
 
 ## Development
 

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `--jira-site` (or `WORKBOARD_JIRA_SITE`) is now required instead of defaulting to a specific Jira site.
+- Released under the MIT license.
 - Read Jira through a local Tracon node instead of `acli`, adding parent epics and labels to the snapshot. `--acli` is replaced by `--tracon-url` and `--jira-channel`.
 - Ordered projects that hold your priorities, matched to Jira issues, epics, or project keys, with Next, Waiting, and Later grouped by priority.
 - `key:value` tags on tasks plus derived Jira tags, with tag filters, project filters, and search over notes and tags.
