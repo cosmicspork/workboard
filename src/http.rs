@@ -125,6 +125,14 @@ async fn create(
     Ok((StatusCode::CREATED, Json(task)))
 }
 
+async fn task(State(app): State<App>, Path(id): Path<String>) -> ApiResult<crate::model::Task> {
+    let store = app.store.clone();
+    blocking(move || store.task(&id))
+        .await?
+        .map(Json)
+        .map_err(store_error)
+}
+
 async fn update(
     State(app): State<App>,
     Path(id): Path<String>,
@@ -393,7 +401,7 @@ pub fn router(app: App) -> Router {
         .route("/api/tasks", post(create))
         .route("/api/tasks/triage", post(triage))
         .route("/api/tasks/project", post(assign_project))
-        .route("/api/tasks/{id}", put(update))
+        .route("/api/tasks/{id}", get(task).put(update))
         .route("/api/projects", post(create_project))
         .route("/api/projects/order", post(order_projects))
         .route(

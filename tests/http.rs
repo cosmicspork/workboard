@@ -181,6 +181,21 @@ async fn localhost_and_ipv4_are_independent_same_origin_hosts() {
     .await;
     assert_eq!(status, 200);
     assert_eq!(tagged["tags"][0], "person:sam");
+    let (status, read) = request(
+        port,
+        "GET",
+        &localhost,
+        None,
+        &format!("/api/tasks/{}", task["id"].as_str().unwrap()),
+        "",
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(read["version"], tagged["version"]);
+    assert_eq!(read["tags"][0], "person:sam");
+    let (status, error) = request(port, "GET", &localhost, None, "/api/tasks/missing", "").await;
+    assert_eq!(status, 404);
+    assert_eq!(error["error"], "not_found");
     let (status, error) = request(
         port,
         "DELETE",

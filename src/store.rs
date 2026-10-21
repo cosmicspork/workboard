@@ -123,6 +123,11 @@ impl Store {
         Ok(task)
     }
 
+    pub fn task(&self, id: &str) -> Result<Task, StoreError> {
+        let connection = self.lock()?;
+        load_task(&connection, id, &self.site)?.ok_or(StoreError::NotFound)
+    }
+
     pub fn update(&self, id: &str, input: UpdateTask) -> Result<Task, StoreError> {
         validate_update(&input)?;
         let tags = normalize_tags(&input.tags)?;

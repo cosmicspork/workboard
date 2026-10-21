@@ -753,6 +753,30 @@ select:focus-visible {
   font-size: 11px;
   line-height: 1.5;
 }
+.task-id {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  min-width: 0;
+  color: #8a938e;
+  font-size: 11px;
+}
+.task-id code {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #4f5853;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  user-select: all;
+}
+.task-id .quiet-button {
+  min-height: 26px;
+  padding: 0 10px;
+  font-size: 11px;
+}
 .editor-actions {
   display: flex;
   justify-content: flex-end;
@@ -977,7 +1001,8 @@ select:focus-visible {
   align-items: center;
   gap: 4px;
   border-radius: 999px;
-  padding: 3px 9px;
+  min-height: 26px;
+  padding: 0 10px;
   background: var(--green-soft);
   color: var(--green);
   font-size: 10px;
