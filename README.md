@@ -47,4 +47,4 @@ bun run --cwd spa check
 bun test --cwd spa
 ```
 
-The API is single-user and local-only: JSON under `/api`, optimistic task versions for edits, 64 KiB request cap, same-origin mutation protection, and no login or CORS surface. Frontend list selection, grouping, and filtering live in `spa/src/lib/views.ts`; transactional persistence, project resolution, and snapshot reconciliation live in `src/store.rs`.
+The API is single-user and local-only: JSON under `/api`, optimistic task versions for edits, `GET /api/tasks/{id}` to read one task by the Workboard ID shown in its editor, 64 KiB request cap, same-origin mutation protection, and no login or CORS surface. Frontend list selection, grouping, and filtering live in `spa/src/lib/views.ts`; transactional persistence, project resolution, and snapshot reconciliation live in `src/store.rs`.

@@ -21,6 +21,7 @@
   let error = '';
   let conflict = false;
   let editVersion = task.version;
+  let copied = false;
 
   $: derivedProject = task.project_source === 'jira' ? projects.find(project => project.id === task.effective_project_id) : undefined;
   function addLink() { links = [...links, { label: '', url: '' }]; }
@@ -28,6 +29,13 @@
   function changeState(value: string) {
     state = value as State;
     if (state !== 'next') today = false;
+  }
+  async function copyId() {
+    try {
+      await navigator.clipboard.writeText(task.id);
+      copied = true;
+      setTimeout(() => { copied = false; }, 1500);
+    } catch { copied = false; }
   }
   async function submit(event: SubmitEvent) {
     event.preventDefault();
@@ -74,6 +82,7 @@
 
 <form class="editor" onsubmit={submit} aria-labelledby="editor-title">
   <div class="editor-heading"><div><p class="eyebrow">PERSONAL COMMITMENT</p><h2 id="editor-title">Edit task</h2></div><button class="icon-button" type="button" aria-label="Close editor" onclick={onCancel}>×</button></div>
+  <div class="task-id"><span>Workboard ID</span><code>{task.id}</code><button type="button" class="quiet-button" onclick={copyId}>{copied ? 'Copied' : 'Copy'}</button></div>
   {#if task.jira}<p class="source-note">Imported from <strong>{task.jira.key}</strong>. Leave personal title blank to use the Jira summary: “{task.jira.summary}”.</p>{/if}
   <label>Personal title<input bind:value={titleOverride} maxlength="500" placeholder={task.jira ? task.jira.summary : 'Task title'} required={!task.jira} /></label>
   <label>Next action<textarea bind:value={nextAction} maxlength="16384" rows="2" placeholder="The next concrete step"></textarea></label>
