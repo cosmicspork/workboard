@@ -5,6 +5,7 @@
   import TaskEditor from './TaskEditor.svelte';
   import TaskRow from './TaskRow.svelte';
   import { api, refreshErrorText, type Board, type CreateTask, type Project, type ProjectInput, type State, type Task, type UpdateTask } from './lib/api';
+  import { applyTheme, loadTheme, THEMES, type Theme } from './lib/theme';
   import { filterTasks, groupByProject, inboxTasks, knownTags, laneTasks, navigationCounts, openCountsByProject, parseTags, reviewDueTasks, todayTasks, type Filter } from './lib/views';
 
   type View = State | 'morning' | 'projects';
@@ -36,6 +37,8 @@
   let addError = $state('');
   let mutationError = $state('');
   let adding = $state(false);
+  let theme = $state<Theme>(loadTheme());
+  $effect(() => applyTheme(theme));
 
   function loadFilter(): Filter {
     const empty = { query: '', projectId: '', tags: [] };
@@ -193,7 +196,7 @@
   <main class="main-content">
     <header class="topbar">
       <div class="breadcrumbs">WORKBOARD <span>/</span> {lanes.find(item => item.id === view)?.label.toUpperCase()}</div>
-      <div class="top-actions"><button class="quiet-button" onclick={() => showAdd = !showAdd}>＋ Add task</button><button class="primary-button refresh-button" onclick={refreshJira} disabled={refreshBusy || board?.sync.refresh_in_progress}>{refreshBusy || board?.sync.refresh_in_progress ? 'Refreshing…' : '↻ Refresh Jira'}</button></div>
+      <div class="top-actions"><div class="theme-toggle" role="radiogroup" aria-label="Color theme">{#each THEMES as option (option.id)}<button type="button" role="radio" aria-checked={theme === option.id} class:active={theme === option.id} title={option.id === 'auto' ? 'Follow system setting' : `${option.label} theme`} onclick={() => theme = option.id}>{option.label}</button>{/each}</div><button class="quiet-button" onclick={() => showAdd = !showAdd}>＋ Add task</button><button class="primary-button refresh-button" onclick={refreshJira} disabled={refreshBusy || board?.sync.refresh_in_progress}>{refreshBusy || board?.sync.refresh_in_progress ? 'Refreshing…' : '↻ Refresh Jira'}</button></div>
     </header>
     <div class="content-wrap">
       {#if loadError}<div class="alert" role="alert"><strong>Could not load board</strong><span>{loadError}</span><button class="quiet-button" onclick={() => loadBoard(true)}>Try again</button></div>{/if}
