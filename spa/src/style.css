@@ -1,24 +1,61 @@
+/* Themes: "auto" follows the OS via color-scheme; data-theme pins light or dark. */
 :root {
+  color-scheme: light dark;
   font-family:
     Inter,
     -apple-system,
     BlinkMacSystemFont,
     "Segoe UI",
     sans-serif;
-  color: #202a27;
-  background: #f6f5f1;
+  color: var(--ink);
+  background: var(--bg);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   font-weight: 400;
   font-size: 14px;
-  --ink: #202a27;
-  --muted: #77817d;
-  --line: #e5e7e2;
-  --paper: #fff;
-  --green: #285c4a;
-  --green-soft: #eaf1ed;
-  --orange: #c7773d;
-  --shadow: 0 12px 35px #1d30240d;
+  --bg: light-dark(#f6f5f1, #131816);
+  --paper: light-dark(#fff, #1b2220);
+  --topbar: light-dark(#ffffffc9, #1b2220c9);
+  --hover: light-dark(#f6f7f4, #232c29);
+  --sunken: light-dark(#f7f7f3, #161c1a);
+  --chip: light-dark(#f0f1ed, #252e2b);
+  --ink: light-dark(#202a27, #e3e9e6);
+  --ink-2: light-dark(#4d5953, #c3ccc7);
+  --text-3: light-dark(#6c7771, #a2ada7);
+  --muted: light-dark(#808a85, #86918c);
+  --faint-text: light-dark(#959e99, #6f7a75);
+  --faint: light-dark(#c3c9c5, #47524d);
+  --line: light-dark(#e5e7e2, #2a3330);
+  --line-strong: light-dark(#d7ddd8, #39443f);
+  --accent: light-dark(#285c4a, #2e6d56);
+  --accent-hover: light-dark(#204a3a, #367d63);
+  --on-accent: #fff;
+  --green: light-dark(#285c4a, #8dcaae);
+  --green-soft: light-dark(#eaf1ed, #1e2f28);
+  --green-soft-hover: light-dark(#dce9e1, #273d33);
+  --green-text: light-dark(#416b58, #8dcaae);
+  --green-strong: light-dark(#234a3b, #b8e3cd);
+  --focus: light-dark(#8bb4a0, #5e9c80);
+  --orange: light-dark(#c7773d, #e39a62);
+  --sync: light-dark(#d7925e, #e39a62);
+  --sync-glow: light-dark(#d7925e22, #e39a6233);
+  --danger-bg: light-dark(#fff2ee, #36211c);
+  --danger-bg-hover: light-dark(#fce9e2, #452821);
+  --danger-line: light-dark(#f0d8cf, #5b342a);
+  --danger-text: light-dark(#a24834, #f2a593);
+  --danger-strong: light-dark(#713e32, #f8c6b9);
+  --warn-bg: light-dark(#fff8ed, #312818);
+  --warn-line: light-dark(#efe2c9, #54452b);
+  --warn-text: light-dark(#856239, #e5b880);
+  --shadow: 0 12px 35px light-dark(#1d30240d, #00000040);
+  --shadow-strong: light-dark(#101a1530, #00000080);
+  --backdrop: light-dark(#18251f55, #000000a0);
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
 }
 * {
   box-sizing: border-box;
@@ -53,7 +90,7 @@ a:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
 select:focus-visible {
-  outline: 3px solid #8bb4a0;
+  outline: 3px solid var(--focus);
   outline-offset: 2px;
 }
 .app-shell {
@@ -63,7 +100,7 @@ select:focus-visible {
   position: fixed;
   inset: 0 auto 0 0;
   width: 244px;
-  background: #fff;
+  background: var(--paper);
   border-right: 1px solid var(--line);
   padding: 28px 17px;
   display: flex;
@@ -75,7 +112,7 @@ select:focus-visible {
   align-items: center;
   gap: 11px;
   padding: 0 11px;
-  color: #2b463c;
+  color: var(--green-strong);
   font-weight: 750;
   font-size: 16px;
   letter-spacing: -0.35px;
@@ -91,7 +128,7 @@ select:focus-visible {
   font-size: 10px;
   letter-spacing: 1.05px;
   font-weight: 700;
-  color: #89928e;
+  color: var(--muted);
 }
 .nav-label {
   margin: 42px 12px 10px;
@@ -106,20 +143,20 @@ select:focus-visible {
   justify-content: space-between;
   padding: 11px 12px;
   border-radius: 8px;
-  color: #5c6762;
+  color: var(--ink-2);
   font-weight: 550;
 }
 .sidebar nav a:hover {
-  background: #f6f7f4;
+  background: var(--hover);
   color: var(--ink);
 }
 .sidebar nav a.active {
   background: var(--green-soft);
-  color: #275644;
+  color: var(--green-text);
   font-weight: 650;
 }
 .nav-count {
-  color: #89918d;
+  color: var(--muted);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
@@ -150,11 +187,11 @@ select:focus-visible {
   flex: none;
   margin-top: 4px;
   border-radius: 50%;
-  background: #b8c4be;
+  background: var(--faint);
 }
 .sync-dot.syncing {
-  background: #d7925e;
-  box-shadow: 0 0 0 4px #d7925e22;
+  background: var(--sync);
+  box-shadow: 0 0 0 4px var(--sync-glow);
 }
 .main-content {
   margin-left: 244px;
@@ -162,7 +199,7 @@ select:focus-visible {
 }
 .topbar {
   height: 69px;
-  background: #ffffffc9;
+  background: var(--topbar);
   border-bottom: 1px solid var(--line);
   padding: 0 48px;
   display: flex;
@@ -173,11 +210,11 @@ select:focus-visible {
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 1px;
-  color: #7d8782;
+  color: var(--text-3);
 }
 .breadcrumbs span {
   padding: 0 9px;
-  color: #c3c9c5;
+  color: var(--faint);
 }
 .top-actions {
   display: flex;
@@ -200,32 +237,32 @@ select:focus-visible {
     border-color 0.15s;
 }
 .primary-button {
-  background: var(--green);
-  color: #fff;
+  background: var(--accent);
+  color: var(--on-accent);
 }
 .primary-button:hover {
-  background: #204a3a;
+  background: var(--accent-hover);
 }
 .primary-button:disabled {
   opacity: 0.6;
   cursor: wait;
 }
 .quiet-button {
-  background: #fff;
+  background: var(--paper);
   border: 1px solid var(--line);
-  color: #47534d;
+  color: var(--ink-2);
 }
 .quiet-button:hover {
-  background: #f7f8f5;
-  border-color: #cbd3ce;
+  background: var(--hover);
+  border-color: var(--line-strong);
 }
 .danger-button {
-  background: #fff4f0;
-  color: #a34531;
-  border: 1px solid #f0d8cf;
+  background: var(--danger-bg);
+  color: var(--danger-text);
+  border: 1px solid var(--danger-line);
 }
 .danger-button:hover {
-  background: #fce9e2;
+  background: var(--danger-bg-hover);
 }
 .content-wrap {
   max-width: 1040px;
@@ -253,14 +290,14 @@ select:focus-visible {
 }
 .subheading {
   margin: 9px 0 0;
-  color: #7c8581;
+  color: var(--text-3);
   font-size: 14px;
 }
 .date-chip {
   border: 1px solid var(--line);
-  background: #fff;
+  background: var(--paper);
   border-radius: 7px;
-  color: #65716b;
+  color: var(--text-3);
   padding: 8px 11px;
   font-size: 12px;
 }
@@ -283,17 +320,17 @@ select:focus-visible {
   letter-spacing: -0.3px;
 }
 .section-heading > a {
-  color: #416b58;
+  color: var(--green-text);
   font-size: 12px;
   font-weight: 600;
 }
 .section-heading > a:hover,
 .text-link:hover {
-  color: #193d2f;
+  color: var(--green-strong);
 }
 .section-kicker {
   font-size: 9px;
-  color: #9aa29e;
+  color: var(--faint-text);
 }
 .count-pill {
   display: inline-flex;
@@ -303,8 +340,8 @@ select:focus-visible {
   min-width: 23px;
   padding: 0 7px;
   border-radius: 20px;
-  background: #eff1ee;
-  color: #68736d;
+  background: var(--chip);
+  color: var(--text-3);
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0;
@@ -318,14 +355,14 @@ select:focus-visible {
   align-items: flex-start;
   gap: 14px;
   background: var(--paper);
-  border: 1px solid #e9ebe7;
+  border: 1px solid var(--line);
   border-radius: 9px;
   padding: 16px 17px;
   box-shadow: var(--shadow);
   min-width: 0;
 }
 .task-row:hover {
-  border-color: #d8dfd9;
+  border-color: var(--line-strong);
 }
 .row-checkbox {
   width: 16px;
@@ -348,19 +385,19 @@ select:focus-visible {
   letter-spacing: -0.1px;
 }
 .task-title:hover {
-  color: #32604c;
+  color: var(--green-text);
   text-decoration: underline;
   text-underline-offset: 3px;
 }
 .next-action {
   margin: 5px 0 0;
-  color: #65706a;
+  color: var(--text-3);
   font-size: 12px;
   line-height: 1.55;
   white-space: pre-wrap;
 }
 .next-action span {
-  color: #94a09a;
+  color: var(--faint-text);
   padding-right: 3px;
 }
 .task-meta {
@@ -369,11 +406,11 @@ select:focus-visible {
   gap: 8px;
   flex-wrap: wrap;
   margin-top: 10px;
-  color: #8a938e;
+  color: var(--muted);
   font-size: 10px;
 }
 .jira-key {
-  color: #496b5a;
+  color: var(--green-text);
   font-weight: 700;
   letter-spacing: 0.2px;
 }
@@ -383,20 +420,20 @@ select:focus-visible {
 .state-tag {
   border-radius: 5px;
   padding: 3px 7px;
-  background: #f2f4f1;
-  color: #737e78;
+  background: var(--chip);
+  color: var(--text-3);
   font-size: 10px;
 }
 .badge-done {
-  background: #edf2ed;
-  color: #496c56;
+  background: var(--green-soft);
+  color: var(--green-text);
 }
 .review-tag {
-  background: #fff3e9;
-  color: #a76736;
+  background: var(--warn-bg);
+  color: var(--warn-text);
 }
 .state-tag {
-  background: #f3f4f1;
+  background: var(--chip);
   text-transform: capitalize;
   white-space: nowrap;
 }
@@ -411,13 +448,13 @@ select:focus-visible {
   height: 30px;
   border-radius: 6px;
   background: transparent;
-  color: #83908a;
+  color: var(--muted);
   font-size: 21px;
   line-height: 1;
 }
 .icon-button:hover {
-  background: #f0f3ef;
-  color: #263d32;
+  background: var(--chip);
+  color: var(--ink);
 }
 .edit-button {
   opacity: 0.5;
@@ -433,7 +470,7 @@ select:focus-visible {
   margin-top: 8px;
 }
 .task-links a {
-  color: #557767;
+  color: var(--green-text);
   font-size: 11px;
   text-decoration: underline;
   text-underline-offset: 2px;
@@ -443,10 +480,10 @@ select:focus-visible {
   align-items: center;
   gap: 13px;
   padding: 19px 20px;
-  background: #fff;
-  border: 1px dashed #d9dfd9;
+  background: var(--paper);
+  border: 1px dashed var(--line-strong);
   border-radius: 9px;
-  color: #56635c;
+  color: var(--ink-2);
 }
 .empty-icon {
   display: grid;
@@ -454,8 +491,8 @@ select:focus-visible {
   width: 34px;
   height: 34px;
   border-radius: 50%;
-  background: #f0f4f0;
-  color: #648271;
+  background: var(--green-soft);
+  color: var(--green-text);
   font-size: 18px;
 }
 .empty-state strong {
@@ -464,20 +501,20 @@ select:focus-visible {
 .empty-state p,
 .inbox-preview p {
   margin: 4px 0 0;
-  color: #87918b;
+  color: var(--muted);
   font-size: 12px;
 }
 .text-link {
   margin-left: auto;
-  color: #426a57;
+  color: var(--green-text);
   font-size: 11px;
   font-weight: 600;
 }
 .quiet-empty {
   padding: 17px 19px;
   border-radius: 8px;
-  background: #f0f1ed;
-  color: #89928d;
+  background: var(--chip);
+  color: var(--muted);
   font-size: 12px;
 }
 .inbox-preview {
@@ -486,20 +523,20 @@ select:focus-visible {
   justify-content: space-between;
   margin-top: 36px;
   padding: 19px 21px;
-  border: 1px solid #e8eae5;
+  border: 1px solid var(--line);
   border-radius: 10px;
-  background: #eeefeb;
+  background: var(--chip);
 }
 .inbox-preview h2 {
   margin-top: 6px;
 }
 .inbox-preview .primary-button {
-  background: #fff;
-  color: #38604c;
-  border: 1px solid #dae2dc;
+  background: var(--paper);
+  color: var(--green-text);
+  border: 1px solid var(--line-strong);
 }
 .inbox-preview .primary-button:hover {
-  background: #e5eee8;
+  background: var(--green-soft-hover);
 }
 .list-toolbar {
   display: flex;
@@ -513,10 +550,10 @@ select:focus-visible {
   flex: 1;
   min-width: 100px;
   padding: 0 12px;
-  background: #fff;
+  background: var(--paper);
   border: 1px solid var(--line);
   border-radius: 7px;
-  color: #8c9690;
+  color: var(--muted);
 }
 .search-box > span {
   font-size: 19px;
@@ -534,7 +571,7 @@ select:focus-visible {
 }
 .search-box button {
   background: transparent;
-  color: #87918b;
+  color: var(--muted);
   font-size: 18px;
 }
 .project-filter {
@@ -544,8 +581,8 @@ select:focus-visible {
   padding: 0 10px;
   border: 1px solid var(--line);
   border-radius: 7px;
-  background: #fff;
-  color: #7e8983;
+  background: var(--paper);
+  color: var(--text-3);
   font-size: 11px;
 }
 .project-filter select {
@@ -554,7 +591,7 @@ select:focus-visible {
   background: transparent;
   height: 38px;
   font-weight: 600;
-  color: #46534c;
+  color: var(--ink-2);
   outline: none;
 }
 .bulk-toolbar {
@@ -564,17 +601,17 @@ select:focus-visible {
   gap: 9px;
   padding: 11px 13px;
   margin-bottom: 10px;
-  background: #edf2ee;
-  border: 1px solid #e1e9e2;
+  background: var(--green-soft);
+  border: 1px solid var(--line-strong);
   border-radius: 8px;
-  color: #68756e;
+  color: var(--text-3);
   font-size: 11px;
 }
 .check-label {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  color: #57645c;
+  color: var(--ink-2);
   font-size: 11px;
 }
 .check-label input {
@@ -591,17 +628,17 @@ select:focus-visible {
 .bulk-date input {
   width: 125px;
   height: 29px;
-  border: 1px solid #d7dfd8;
+  border: 1px solid var(--line-strong);
   border-radius: 5px;
-  background: #fff;
+  background: var(--paper);
   padding: 4px;
   font-size: 11px;
 }
 .large-empty {
   padding: 70px 20px;
   text-align: center;
-  border: 1px dashed #d9dfd9;
-  background: #fff;
+  border: 1px dashed var(--line-strong);
+  background: var(--paper);
   border-radius: 10px;
 }
 .large-empty > span {
@@ -611,8 +648,8 @@ select:focus-visible {
   width: 40px;
   height: 40px;
   border-radius: 50%;
-  background: #edf2ed;
-  color: #648271;
+  background: var(--green-soft);
+  color: var(--green-text);
   font-size: 19px;
 }
 .large-empty h2 {
@@ -620,7 +657,7 @@ select:focus-visible {
   margin: 0;
 }
 .large-empty p {
-  color: #87918b;
+  color: var(--muted);
   font-size: 12px;
   margin: 7px 0 17px;
 }
@@ -638,31 +675,31 @@ select:focus-visible {
   gap: 12px;
   margin-bottom: 14px;
   padding: 12px 14px;
-  background: #fff2ee;
-  border: 1px solid #f0d8cf;
+  background: var(--danger-bg);
+  border: 1px solid var(--danger-line);
   border-radius: 7px;
-  color: #8f4837;
+  color: var(--danger-text);
   font-size: 12px;
 }
 .alert strong {
-  color: #713e32;
+  color: var(--danger-strong);
 }
 .alert .quiet-button {
   margin-left: auto;
   white-space: nowrap;
 }
 .jira-alert {
-  background: #fff8ed;
-  border-color: #efe2c9;
-  color: #856239;
+  background: var(--warn-bg);
+  border-color: var(--warn-line);
+  color: var(--warn-text);
 }
 .add-panel,
 .editor {
   padding: 23px;
-  background: #fff;
-  border: 1px solid #e4e8e2;
+  background: var(--paper);
+  border: 1px solid var(--line);
   border-radius: 10px;
-  box-shadow: 0 12px 40px #24362c0b;
+  box-shadow: var(--shadow);
 }
 .add-panel {
   margin-bottom: 28px;
@@ -685,7 +722,7 @@ select:focus-visible {
   display: grid;
   gap: 6px;
   margin-bottom: 14px;
-  color: #616c66;
+  color: var(--text-3);
   font-size: 11px;
   font-weight: 600;
 }
@@ -696,10 +733,10 @@ select:focus-visible {
 .editor select {
   width: 100%;
   padding: 9px 10px;
-  border: 1px solid #dfe4df;
+  border: 1px solid var(--line);
   border-radius: 6px;
-  background: #fff;
-  color: #26332c;
+  background: var(--paper);
+  color: var(--ink);
   font-size: 12px;
   font-weight: 400;
 }
@@ -721,7 +758,7 @@ select:focus-visible {
 }
 .editor legend {
   padding: 0 5px;
-  color: #616c66;
+  color: var(--text-3);
   font-size: 11px;
   font-weight: 600;
 }
@@ -747,9 +784,9 @@ select:focus-visible {
 }
 .source-note {
   padding: 10px 12px;
-  background: #f5f6f3;
+  background: var(--hover);
   border-radius: 6px;
-  color: #6f7973;
+  color: var(--text-3);
   font-size: 11px;
   line-height: 1.5;
 }
@@ -759,7 +796,7 @@ select:focus-visible {
   gap: 8px;
   margin-bottom: 12px;
   min-width: 0;
-  color: #8a938e;
+  color: var(--muted);
   font-size: 11px;
 }
 .task-id code {
@@ -768,7 +805,7 @@ select:focus-visible {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: #4f5853;
+  color: var(--ink-2);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   user-select: all;
 }
@@ -785,9 +822,9 @@ select:focus-visible {
 }
 .form-error {
   padding: 10px;
-  background: #fff1ed;
+  background: var(--danger-bg);
   border-radius: 6px;
-  color: #a24834;
+  color: var(--danger-text);
   font-size: 12px;
 }
 .dialog-backdrop {
@@ -796,21 +833,21 @@ select:focus-visible {
   z-index: 5;
   display: flex;
   justify-content: flex-end;
-  background: #18251f55;
+  background: var(--backdrop);
 }
 .dialog-backdrop > div[role="dialog"] {
   width: min(570px, 100%);
   height: 100%;
   overflow: auto;
-  background: #f7f7f3;
+  background: var(--sunken);
   padding: 23px;
-  box-shadow: -15px 0 45px #101a1530;
+  box-shadow: -15px 0 45px var(--shadow-strong);
 }
 .dialog-backdrop .editor {
   box-shadow: none;
 }
 .muted {
-  color: #929a95;
+  color: var(--faint-text);
   font-size: 11px;
 }
 @media (max-width: 850px) {
@@ -979,14 +1016,14 @@ select:focus-visible {
   min-width: 160px;
   height: 30px;
   padding: 0 10px;
-  border: 1px dashed #d7ddd8;
+  border: 1px dashed var(--line-strong);
   border-radius: 6px;
   background: transparent;
   font-size: 11px;
 }
 .text-button {
   background: transparent;
-  color: #416b58;
+  color: var(--green-text);
   font-size: 11px;
   font-weight: 600;
 }
@@ -1009,11 +1046,11 @@ select:focus-visible {
   font-weight: 600;
 }
 .tag-chip:hover {
-  background: #dce9e1;
+  background: var(--green-soft-hover);
 }
 .jira-chip {
-  background: #f2f4f1;
-  color: #737e78;
+  background: var(--chip);
+  color: var(--text-3);
   font-weight: 500;
 }
 .active-chip button {
@@ -1066,7 +1103,7 @@ select:focus-visible {
 }
 .field-hint {
   margin: -6px 0 12px;
-  color: #8a938e;
+  color: var(--muted);
   font-size: 11px;
   line-height: 1.5;
 }
@@ -1080,5 +1117,51 @@ select:focus-visible {
   }
   .tag-input {
     min-width: 0;
+  }
+}
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--chip);
+}
+.theme-toggle button {
+  min-height: 29px;
+  padding: 0 10px;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 600;
+}
+.theme-toggle button:hover {
+  color: var(--ink);
+}
+.theme-toggle button.active {
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: 0 1px 2px var(--shadow-strong);
+}
+@media (max-width: 650px) {
+  .topbar .breadcrumbs {
+    display: none;
+  }
+  .top-actions {
+    width: 100%;
+  }
+  .top-actions button {
+    padding: 0 8px;
+    white-space: nowrap;
+  }
+  .theme-toggle {
+    margin-right: auto;
+    padding: 2px;
+  }
+  .theme-toggle button {
+    padding: 0 6px;
+    font-size: 10px;
   }
 }
