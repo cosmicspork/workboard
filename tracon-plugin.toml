@@ -1,5 +1,5 @@
 name = "workboard"
-version = "0.2.0"
+version = "0.1.0"
 contract = 1
 # The node appends --socket <path> --data <dir>, which starts plugin mode.
 exec = ["bin/workboard", "serve"]

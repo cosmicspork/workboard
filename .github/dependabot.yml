@@ -1,0 +1,23 @@
+version: 2
+updates:
+  # The workflows pin every action to a commit SHA, so nothing moves unless
+  # this does it. One grouped PR a month.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: ci
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: chore(deps)
+    groups:
+      cargo:
+        patterns: ["*"]
