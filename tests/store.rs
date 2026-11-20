@@ -102,8 +102,9 @@ fn refresh_imports_open_categories_once_and_uses_status_category() {
             .jira
             .as_ref()
             .unwrap()
-            .url,
-        "https://example.atlassian.net/browse/A-1"
+            .url
+            .as_deref(),
+        Some("https://example.atlassian.net/browse/A-1")
     );
     refresh(&store, &rows);
     assert_eq!(

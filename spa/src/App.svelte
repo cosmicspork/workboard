@@ -4,7 +4,7 @@
   import ProjectsPanel from './ProjectsPanel.svelte';
   import TaskEditor from './TaskEditor.svelte';
   import TaskRow from './TaskRow.svelte';
-  import { api, refreshErrorText, type Board, type CreateTask, type Project, type ProjectInput, type State, type Task, type UpdateTask } from './lib/api';
+  import { api, ApiError, refreshErrorText, type Board, type CreateTask, type Project, type ProjectInput, type State, type Task, type UpdateTask } from './lib/api';
   import { applyTheme, loadTheme, THEMES, type Theme } from './lib/theme';
   import { filterTasks, groupByProject, inboxTasks, knownTags, laneTasks, navigationCounts, openCountsByProject, parseTags, reviewDueTasks, todayTasks, type Filter } from './lib/views';
 
@@ -138,7 +138,11 @@
   async function refreshJira() {
     refreshBusy = true;
     try { await api.refresh(); }
-    catch { /* the board carries stable error metadata and recovery guidance */ }
+    catch (error) {
+      // A missing Jira site is configuration, not a failed sync, so the board carries no record of it.
+      if (error instanceof ApiError && error.code === 'jira_site_missing') mutationError = error.message;
+      /* otherwise the board carries stable error metadata and recovery guidance */
+    }
     finally { refreshBusy = false; await loadBoard(); }
   }
   function shownTasks(): Task[] {
@@ -181,7 +185,7 @@
 <svelte:head><title>{lanes.find(item => item.id === view)?.label} · Workboard</title></svelte:head>
 <div class="app-shell">
   <aside class="sidebar">
-    <a class="brand" href="#/morning" aria-label="Workboard home"><img class="brand-mark" src="/workboard.svg" alt="" width="29" height="29" /><span>workboard</span></a>
+    <a class="brand" href="#/morning" aria-label="Workboard home"><img class="brand-mark" src="./workboard.svg" alt="" width="29" height="29" /><span>workboard</span></a>
     <p class="nav-label">YOUR BOARD</p>
     <nav aria-label="Workboard views">
       {#each lanes as lane (lane.id)}

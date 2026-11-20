@@ -33,8 +33,11 @@ fn page(issues: Vec<Value>, next: Option<&str>) -> Value {
     json!({"site": SITE, "account_email": "user@example.com", "issues": issues, "next_cursor": next})
 }
 
+/// A search request's query, and whether it carried an Origin header.
+type Search = (HashMap<String, String>, bool);
+
 #[derive(Clone, Default)]
-struct Seen(Arc<Mutex<Vec<(HashMap<String, String>, bool)>>>);
+struct Seen(Arc<Mutex<Vec<Search>>>);
 
 type Reply = fn(Option<&str>) -> Response;
 

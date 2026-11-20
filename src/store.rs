@@ -13,7 +13,9 @@ use uuid::Uuid;
 
 pub struct Store {
     connection: Mutex<Connection>,
-    site: Url,
+    /// The configured Jira site; browse links and refreshes need it, the rest
+    /// of the board does not.
+    site: Option<Url>,
 }
 
 #[derive(Debug)]
@@ -52,6 +54,11 @@ const MIGRATIONS: &[&str] = &[
 
 impl Store {
     pub fn init(dir: &Path, site: &Url) -> anyhow::Result<Self> {
+        Self::open(dir, Some(site))
+    }
+
+    /// Open the board in `dir`, with or without a configured Jira site.
+    pub fn open(dir: &Path, site: Option<&Url>) -> anyhow::Result<Self> {
         std::fs::create_dir_all(dir)
             .with_context(|| format!("creating data directory {}", dir.display()))?;
         set_mode(dir, 0o700)?;
@@ -72,7 +79,7 @@ impl Store {
         }
         Ok(Self {
             connection: Mutex::new(connection),
-            site: site.clone(),
+            site: site.cloned(),
         })
     }
 
@@ -85,7 +92,7 @@ impl Store {
         let mut statement =
             connection.prepare(&format!("{TASK_SELECT} ORDER BY t.created_at,t.id"))?;
         let mut tasks = statement
-            .query_map([], |row| task_from_row(row, &self.site))?
+            .query_map([], |row| task_from_row(row, self.site.as_ref()))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         let projects = read_projects(&connection)?;
         hydrate(&connection, &mut tasks, &projects)?;
@@ -118,14 +125,14 @@ impl Store {
             serde_json::to_string(&input.links).map_err(|e| StoreError::Internal(e.to_string()))?;
         transaction.execute("INSERT INTO tasks(id,title_override,next_action,notes,state,today,links_json,created_at,updated_at,project_id) VALUES(?1,?2,?3,?4,'inbox',0,?5,?6,?6,?7)", params![id,input.title,input.next_action,input.notes,links,now,input.project_id]).map_err(internal)?;
         write_tags(&transaction, &id, &tags)?;
-        let task = load_task(&transaction, &id, &self.site)?.ok_or(StoreError::NotFound)?;
+        let task = load_task(&transaction, &id, self.site.as_ref())?.ok_or(StoreError::NotFound)?;
         transaction.commit().map_err(internal)?;
         Ok(task)
     }
 
     pub fn task(&self, id: &str) -> Result<Task, StoreError> {
         let connection = self.lock()?;
-        load_task(&connection, id, &self.site)?.ok_or(StoreError::NotFound)
+        load_task(&connection, id, self.site.as_ref())?.ok_or(StoreError::NotFound)
     }
 
     pub fn update(&self, id: &str, input: UpdateTask) -> Result<Task, StoreError> {
@@ -156,7 +163,7 @@ impl Store {
             return Err(StoreError::Conflict);
         }
         write_tags(&transaction, id, &tags)?;
-        let task = load_task(&transaction, id, &self.site)?.ok_or(StoreError::NotFound)?;
+        let task = load_task(&transaction, id, self.site.as_ref())?.ok_or(StoreError::NotFound)?;
         transaction.commit().map_err(internal)?;
         Ok(task)
     }
@@ -176,7 +183,7 @@ impl Store {
         for item in &input.items {
             transaction.execute("UPDATE tasks SET state=?1,today=CASE WHEN ?1='next' THEN today ELSE 0 END,review_on=?2,updated_at=?3,version=version+1 WHERE id=?4 AND version=?5", params![input.state,input.review_on,now,item.id,item.version]).map_err(internal)?;
         }
-        let tasks = load_tasks(&transaction, &input.items, &self.site)?;
+        let tasks = load_tasks(&transaction, &input.items, self.site.as_ref())?;
         transaction.commit().map_err(internal)?;
         Ok(tasks)
     }
@@ -191,7 +198,7 @@ impl Store {
         for item in &input.items {
             transaction.execute("UPDATE tasks SET project_id=?1,updated_at=?2,version=version+1 WHERE id=?3 AND version=?4", params![input.project_id,now,item.id,item.version]).map_err(internal)?;
         }
-        let tasks = load_tasks(&transaction, &input.items, &self.site)?;
+        let tasks = load_tasks(&transaction, &input.items, self.site.as_ref())?;
         transaction.commit().map_err(internal)?;
         Ok(tasks)
     }
@@ -306,7 +313,10 @@ impl Store {
         validate_nonempty(now, "refresh timestamp")?;
         validate_nonempty(&identity.site, "Jira site identity")?;
         validate_nonempty(&identity.account_email, "Jira account email")?;
-        let configured_host = self.site.host_str().unwrap_or_default();
+        let Some(site) = self.site.as_ref() else {
+            return Err(StoreError::Invalid("No Jira site is configured.".into()));
+        };
+        let configured_host = site.host_str().unwrap_or_default();
         if !identity.site.eq_ignore_ascii_case(configured_host) {
             return Err(StoreError::IdentityChanged);
         }
@@ -727,7 +737,11 @@ fn task_local(
         )
         .optional()
 }
-fn load_task(connection: &Connection, id: &str, site: &Url) -> Result<Option<Task>, StoreError> {
+fn load_task(
+    connection: &Connection,
+    id: &str,
+    site: Option<&Url>,
+) -> Result<Option<Task>, StoreError> {
     let Some(task) = connection
         .query_row(&format!("{TASK_SELECT} WHERE t.id=?1"), [id], |r| {
             task_from_row(r, site)
@@ -746,7 +760,7 @@ fn load_task(connection: &Connection, id: &str, site: &Url) -> Result<Option<Tas
 fn load_tasks(
     connection: &Connection,
     items: &[crate::model::VersionedId],
-    site: &Url,
+    site: Option<&Url>,
 ) -> Result<Vec<Task>, StoreError> {
     items
         .iter()
@@ -825,18 +839,21 @@ fn parse_json<T: serde::de::DeserializeOwned>(raw: &str, column: usize) -> rusql
         )
     })
 }
-fn task_from_row(row: &rusqlite::Row<'_>, site: &Url) -> rusqlite::Result<Task> {
+fn task_from_row(row: &rusqlite::Row<'_>, site: Option<&Url>) -> rusqlite::Result<Task> {
     let id: String = row.get(0)?;
     let jira_issue_id: Option<String> = row.get(1)?;
     let title_override: Option<String> = row.get(2)?;
     let links_json: String = row.get(9)?;
     let jira = if let Some(source_id) = row.get::<_, Option<String>>(13)? {
         let key: String = row.get(14)?;
-        let mut url = site.clone();
-        url.path_segments_mut()
-            .expect("configured site must be hierarchical")
-            .push("browse")
-            .push(&key);
+        let url = site.map(|site| {
+            let mut url = site.clone();
+            url.path_segments_mut()
+                .expect("configured site must be hierarchical")
+                .push("browse")
+                .push(&key);
+            url.to_string()
+        });
         let labels: String = row.get(23)?;
         let parent = row
             .get::<_, Option<String>>(24)?
@@ -856,7 +873,7 @@ fn task_from_row(row: &rusqlite::Row<'_>, site: &Url) -> rusqlite::Result<Task> 
             status_category: row.get(17)?,
             priority: row.get(18)?,
             issue_type: row.get(19)?,
-            url: url.to_string(),
+            url,
             last_seen_at: row.get(20)?,
             present_in_latest: row.get::<_, i64>(21)? != 0,
             labels: parse_json(&labels, 23)?,

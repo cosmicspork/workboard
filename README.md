@@ -21,6 +21,29 @@ Options: `--port` changes the loopback port (default 4510), `--tracon-url` choos
 
 The sidebar mark and favicon share `spa/public/workboard.svg`. `bun run --cwd spa icons` regenerates 16px/32px PNGs, a two-size `.ico`, and a 180px Apple touch icon from it. The SPA build runs this generator automatically; rebuild and reinstall the Rust executable after changing the SVG because assets are embedded.
 
+## As a Tracon plugin
+
+Workboard also ships as a [Tracon](https://github.com/cosmicspork/tracon) plugin with a UI. Once a release exists, install it on a node with:
+
+```sh
+tracon plugin add cosmicspork/workboard
+```
+
+The board then appears in Tracon's **Plugins** section, one instance per channel. The node starts `workboard serve --socket <path> --data <dir>`, serves the SPA from the release archive's `ui/` itself, and forwards the SPA's API requests to Workboard as the operator, each carrying a context the node signs. Workboard answers only those requests (any other request to `/api` is refused with 401) and offers no MCP tools.
+
+Configure an instance in `<data>/plugin.toml`; the node gives plugins no other way:
+
+```toml
+jira_site = "https://your-site.atlassian.net"   # needed for Refresh Jira and browse links
+tracon_url = "http://127.0.0.1:7420"            # optional; the node's loopback origin
+```
+
+Without `jira_site` the board works, Jira keys show without links, and **Refresh Jira** says which file to edit. Restart the plugin after changing the file. A refresh uses the Jira credential of the channel the board was opened on (there is no `--jira-channel` in plugin mode).
+
+To move an existing standalone board into an instance, stop both, then copy `~/.local/share/workboard/workboard.sqlite3` and any `-wal`/`-shm` sidecars into the instance's `<data>` directory under the same names. Keep the files private (0600).
+
+Links that open in a new tab (Jira keys, task links) do not open from inside Tracon's frame for now; copy them instead, or use the standalone board.
+
 ## Daily use
 
 - Add standalone work with **Add task**, including a next action and optional HTTP(S) links. New work enters Inbox.
@@ -47,4 +70,6 @@ bun run --cwd spa check
 bun test --cwd spa
 ```
 
-The API is single-user and local-only: JSON under `/api`, optimistic task versions for edits, `GET /api/tasks/{id}` to read one task by the Workboard ID shown in its editor, 64 KiB request cap, same-origin mutation protection, and no login or CORS surface. Frontend list selection, grouping, and filtering live in `spa/src/lib/views.ts`; transactional persistence, project resolution, and snapshot reconciliation live in `src/store.rs`.
+The API is single-user and local-only: JSON under `/api`, optimistic task versions for edits, `GET /api/tasks/{id}` to read one task by the Workboard ID shown in its editor, 64 KiB request cap, same-origin mutation protection (in plugin mode, the node's signed caller context instead), and no login or CORS surface. The SPA uses only relative URLs, since Tracon serves it under a path prefix. Frontend list selection, grouping, and filtering live in `spa/src/lib/views.ts`; transactional persistence, project resolution, and snapshot reconciliation live in `src/store.rs`.
+
+A tag `vX.Y.Z` matching the versions in `Cargo.toml` and `tracon-plugin.toml` builds the plugin archives and attaches them to the GitHub release (`.github/workflows/release.yml`).

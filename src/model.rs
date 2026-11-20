@@ -131,7 +131,8 @@ pub struct JiraFact {
     pub status_category: String,
     pub priority: Option<String>,
     pub issue_type: Option<String>,
-    pub url: String,
+    /// The browse link; absent when no Jira site is configured.
+    pub url: Option<String>,
     pub last_seen_at: String,
     pub present_in_latest: bool,
     pub labels: Vec<String>,

@@ -1,7 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
+- Runs as a Tracon plugin with a UI: `workboard serve --socket <path> --data <dir>` serves the API to the node's operator UI behind a signed caller context, reads `<data>/plugin.toml`, and refreshes Jira through the channel the board was opened on. Release archives carry `tracon-plugin.toml`, `bin/workboard` and `ui/`.
+- The SPA uses relative URLs, so it works at `/` and under a path prefix.
+- Jira keys show without a browse link when no Jira site is configured.
 - `--jira-site` (or `WORKBOARD_JIRA_SITE`) is now required instead of defaulting to a specific Jira site.
 - Released under the MIT license.
 - Read Jira through a local Tracon node instead of `acli`, adding parent epics and labels to the snapshot. `--acli` is replaced by `--tracon-url` and `--jira-channel`.
