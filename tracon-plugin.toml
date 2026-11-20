@@ -1,0 +1,11 @@
+name = "workboard"
+version = "0.1.0"
+contract = 1
+# The node appends --socket <path> --data <dir>, which starts plugin mode.
+exec = ["bin/workboard", "serve"]
+
+# The node serves ui/ (the built SPA) itself and forwards the SPA's api/...
+# requests to this plugin as the operator.
+[ui]
+entry = "ui/index.html"
+title = "Workboard"

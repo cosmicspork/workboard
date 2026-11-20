@@ -6,7 +6,7 @@ use tokio::{
 };
 use url::Url;
 use workboard::{
-    http::{self, App},
+    http::{self, App, JiraSite, Local},
     store::Store,
 };
 
@@ -52,14 +52,18 @@ async fn localhost_and_ipv4_are_independent_same_origin_hosts() {
     let port = listener.local_addr().unwrap().port();
     let app = App {
         store,
-        site,
+        site: JiraSite::Configured(site),
         tracon: Url::parse("http://127.0.0.1:9").unwrap(),
-        jira_channel: "work".into(),
-        origin: format!("http://127.0.0.1:{port}"),
         refresh_in_progress: Arc::new(AtomicBool::new(false)),
     };
+    let local = Local {
+        origin: format!("http://127.0.0.1:{port}"),
+        jira_channel: "work".into(),
+    };
     let server = tokio::spawn(async move {
-        axum::serve(listener, http::router(app)).await.unwrap();
+        axum::serve(listener, http::router(app, local))
+            .await
+            .unwrap();
     });
     let localhost = format!("localhost:{port}");
     let ipv4 = format!("127.0.0.1:{port}");

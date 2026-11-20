@@ -1,3 +1,7 @@
+// Handlers return axum's `Response` as their error so `?` can answer early; boxing it
+// would only add noise.
+#![allow(clippy::result_large_err)]
+
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -6,7 +10,7 @@ use std::sync::{
 use axum::{
     Json, Router,
     body::Bytes,
-    extract::{DefaultBodyLimit, Path, Request, State, rejection::BytesRejection},
+    extract::{DefaultBodyLimit, Extension, Path, Request, State, rejection::BytesRejection},
     http::{HeaderValue, Method, StatusCode, Uri, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
@@ -29,11 +33,33 @@ use crate::{
 #[derive(Clone)]
 pub struct App {
     pub store: Arc<Store>,
-    pub site: Url,
+    pub site: JiraSite,
     pub tracon: Url,
-    pub jira_channel: String,
-    pub origin: String,
     pub refresh_in_progress: Arc<AtomicBool>,
+}
+
+/// The Jira site a refresh checks Tracon's answer against.
+#[derive(Clone, Debug)]
+pub enum JiraSite {
+    Configured(Url),
+    /// Not configured; the board works and a refresh answers `hint`.
+    Missing {
+        hint: String,
+    },
+}
+
+/// The Tracon channel whose Jira credential a refresh uses. The standalone
+/// guard sets it from `--jira-channel`; in plugin mode it is the channel of the
+/// request's verified caller context.
+#[derive(Clone, Debug)]
+pub struct JiraChannel(pub String);
+
+/// What the standalone server checks requests against.
+#[derive(Clone)]
+pub struct Local {
+    /// `http://127.0.0.1:<port>`.
+    pub origin: String,
+    pub jira_channel: String,
 }
 
 #[derive(Embed)]
@@ -42,7 +68,7 @@ struct Assets;
 
 type ApiResult<T> = Result<Json<T>, Response>;
 
-fn error(status: StatusCode, code: &str, message: &str) -> Response {
+pub(crate) fn error(status: StatusCode, code: &str, message: &str) -> Response {
     (status, Json(json!({"error": code, "message": message}))).into_response()
 }
 
@@ -236,6 +262,7 @@ impl Drop for RefreshGuard {
 
 async fn refresh(
     State(app): State<App>,
+    Extension(JiraChannel(channel)): Extension<JiraChannel>,
     bytes: Result<Bytes, BytesRejection>,
 ) -> ApiResult<crate::model::Sync> {
     let bytes = body(bytes)?;
@@ -247,6 +274,12 @@ async fn refresh(
             "Expected an empty JSON object.",
         ));
     }
+    let site = match &app.site {
+        JiraSite::Configured(site) => site.clone(),
+        JiraSite::Missing { hint } => {
+            return Err(error(StatusCode::CONFLICT, "jira_site_missing", hint));
+        }
+    };
     if app
         .refresh_in_progress
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -264,7 +297,10 @@ async fn refresh(
         .await?
         .map_err(|_| internal())?;
     let bound = sync.site.as_deref().zip(sync.account_email.as_deref());
-    let outcome = jira::fetch(&app.tracon, &app.jira_channel, &app.site, bound).await;
+    // This reads the node's loopback `GET /api/jira/search`. In plugin mode it should
+    // become a call to jira-review's `search` tool through the node's plugin-to-node
+    // socket once Tracon offers one (plugins U10).
+    let outcome = jira::fetch(&app.tracon, &channel, &site, bound).await;
     let now = chrono::Utc::now().to_rfc3339();
     match outcome {
         Ok((identity, issues)) => {
@@ -323,7 +359,7 @@ async fn asset(uri: Uri) -> Response {
     }
 }
 
-async fn missing_api() -> Response {
+pub(crate) async fn missing_api() -> Response {
     error(StatusCode::NOT_FOUND, "not_found", "API route not found.")
 }
 async fn fallback(uri: Uri) -> Response {
@@ -334,9 +370,9 @@ async fn fallback(uri: Uri) -> Response {
     }
 }
 
-async fn guard(State(app): State<App>, request: Request, next: Next) -> Response {
+async fn guard(State(local): State<Arc<Local>>, mut request: Request, next: Next) -> Response {
     let is_api = request.uri().path().starts_with("/api");
-    let ipv4_host = app.origin.strip_prefix("http://").unwrap_or("");
+    let ipv4_host = local.origin.strip_prefix("http://").unwrap_or("");
     let port = ipv4_host.strip_prefix("127.0.0.1:").unwrap_or("");
     let host = request
         .headers()
@@ -350,7 +386,7 @@ async fn guard(State(app): State<App>, request: Request, next: Next) -> Response
         .headers()
         .get(header::ORIGIN)
         .and_then(|v| v.to_str().ok());
-    let allowed_origin = (ipv4 && origin == Some(app.origin.as_str()))
+    let allowed_origin = (ipv4 && origin == Some(local.origin.as_str()))
         || (localhost
             && origin.and_then(|value| value.strip_prefix("http://localhost:")) == Some(port));
     let foreign_origin = request.headers().contains_key(header::ORIGIN) && !allowed_origin;
@@ -377,6 +413,9 @@ async fn guard(State(app): State<App>, request: Request, next: Next) -> Response
             "JSON Content-Type is required.",
         )
     } else {
+        request
+            .extensions_mut()
+            .insert(JiraChannel(local.jira_channel.clone()));
         next.run(request).await
     };
     let headers = response.headers_mut();
@@ -395,7 +434,8 @@ async fn guard(State(app): State<App>, request: Request, next: Next) -> Response
     response
 }
 
-pub fn router(app: App) -> Router {
+/// The REST API both modes serve, without any request checks.
+pub(crate) fn api() -> Router<App> {
     Router::new()
         .route("/api/board", get(board))
         .route("/api/tasks", post(create))
@@ -409,10 +449,19 @@ pub fn router(app: App) -> Router {
             put(update_project).delete(delete_project),
         )
         .route("/api/jira/refresh", post(refresh))
+}
+
+/// The standalone server: the API and the embedded SPA, behind the loopback
+/// Host and Origin checks.
+pub fn router(app: App, local: Local) -> Router {
+    api()
         .fallback(fallback)
         .route("/", get(asset))
         .route("/assets/{*path}", get(asset))
-        .layer(DefaultBodyLimit::max(64 * 1024))
-        .layer(middleware::from_fn_with_state(app.clone(), guard))
+        .layer(DefaultBodyLimit::max(BODY_LIMIT))
+        .layer(middleware::from_fn_with_state(Arc::new(local), guard))
         .with_state(app)
 }
+
+/// The largest request body the API reads.
+pub const BODY_LIMIT: usize = 64 * 1024;

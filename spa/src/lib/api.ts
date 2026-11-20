@@ -9,7 +9,7 @@ export interface JiraFact {
   status_category: string;
   priority: string | null;
   issue_type: string | null;
-  url: string;
+  url: string | null;
   present_in_latest: boolean;
   last_seen_at: string;
   labels: string[];
@@ -81,6 +81,7 @@ export class ApiError extends Error {
   constructor(public readonly code: string, message: string, public readonly status: number) { super(message); }
 }
 
+// Paths are relative to the page, so they reach /api standalone and /t/<token>/api under Tracon.
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(path, {
     ...init,
@@ -101,16 +102,16 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 export const api = {
-  board: () => request<Board>('/api/board'),
-  create: (input: CreateTask) => request<Task>('/api/tasks', { method: 'POST', body: JSON.stringify(input) }),
-  update: (id: string, input: UpdateTask) => request<Task>(`/api/tasks/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(input) }),
-  triage: (input: TriageInput) => request<Task[]>('/api/tasks/triage', { method: 'POST', body: JSON.stringify(input) }),
-  refresh: () => request<Sync>('/api/jira/refresh', { method: 'POST', body: '{}' }),
-  assignProject: (items: VersionedId[], project_id: string | null) => request<Task[]>('/api/tasks/project', { method: 'POST', body: JSON.stringify({ items, project_id }) }),
-  createProject: (input: ProjectInput) => request<Project>('/api/projects', { method: 'POST', body: JSON.stringify(input) }),
-  updateProject: (id: string, version: number, input: ProjectInput) => request<Project>(`/api/projects/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify({ version, ...input }) }),
-  orderProjects: (ids: string[]) => request<Project[]>('/api/projects/order', { method: 'POST', body: JSON.stringify({ ids }) }),
-  deleteProject: (id: string, version: number) => request<void>(`/api/projects/${encodeURIComponent(id)}`, { method: 'DELETE', body: JSON.stringify({ version }) })
+  board: () => request<Board>('api/board'),
+  create: (input: CreateTask) => request<Task>('api/tasks', { method: 'POST', body: JSON.stringify(input) }),
+  update: (id: string, input: UpdateTask) => request<Task>(`api/tasks/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(input) }),
+  triage: (input: TriageInput) => request<Task[]>('api/tasks/triage', { method: 'POST', body: JSON.stringify(input) }),
+  refresh: () => request<Sync>('api/jira/refresh', { method: 'POST', body: '{}' }),
+  assignProject: (items: VersionedId[], project_id: string | null) => request<Task[]>('api/tasks/project', { method: 'POST', body: JSON.stringify({ items, project_id }) }),
+  createProject: (input: ProjectInput) => request<Project>('api/projects', { method: 'POST', body: JSON.stringify(input) }),
+  updateProject: (id: string, version: number, input: ProjectInput) => request<Project>(`api/projects/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify({ version, ...input }) }),
+  orderProjects: (ids: string[]) => request<Project[]>('api/projects/order', { method: 'POST', body: JSON.stringify({ ids }) }),
+  deleteProject: (id: string, version: number) => request<void>(`api/projects/${encodeURIComponent(id)}`, { method: 'DELETE', body: JSON.stringify({ version }) })
 };
 
 export function refreshErrorText(code: string | null): string {
