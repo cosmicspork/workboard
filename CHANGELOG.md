@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/cosmicspork/workboard/compare/v0.2.0...v0.3.0) (2026-11-21)
+
+
+### Features
+
+* expose the board's operations as plugin tools, one per HTTP route ([#7](https://github.com/cosmicspork/workboard/issues/7)) ([fa8cace](https://github.com/cosmicspork/workboard/commit/fa8cace7bc583f0788e3d11e98b5ce82645d97d9))
+
 ## [0.2.0](https://github.com/cosmicspork/workboard/compare/v0.1.0...v0.2.0) (2026-11-20)
 
 
