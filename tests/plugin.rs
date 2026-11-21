@@ -12,7 +12,7 @@ use support::{Plugin, http, key, unsigned};
 use workboard::contract::{self, sign};
 
 #[tokio::test]
-async fn mcp_answers_initialize_and_lists_no_tools() {
+async fn mcp_answers_initialize_and_lists_the_operation_table() {
     let dir = tempfile::tempdir().unwrap();
     let mut plugin = Plugin::start(dir.path(), None).await;
     let (status, init) = plugin
@@ -37,7 +37,14 @@ async fn mcp_answers_initialize_and_lists_no_tools() {
     assert_eq!((status, &ping["result"]), (200, &json!({})));
     let (status, tools) = plugin.rpc("tools/list", json!({})).await;
     assert_eq!(status, 200);
-    assert_eq!(tools["result"], json!({ "tools": [] }));
+    let names: Vec<&str> = tools["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["name"].as_str().unwrap())
+        .collect();
+    let ops: Vec<&str> = workboard::ops::OPS.iter().map(|op| op.name).collect();
+    assert_eq!(names, ops);
     let (_, call) = plugin.rpc("tools/call", json!({ "name": "x" })).await;
     assert!(call["error"].is_object());
     // The node serves the SPA; this process does not.

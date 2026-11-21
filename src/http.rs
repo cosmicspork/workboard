@@ -2,6 +2,7 @@
 // would only add noise.
 #![allow(clippy::result_large_err)]
 
+use std::collections::HashMap;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -10,23 +11,21 @@ use std::sync::{
 use axum::{
     Json, Router,
     body::Bytes,
-    extract::{DefaultBodyLimit, Extension, Path, Request, State, rejection::BytesRejection},
+    extract::{
+        DefaultBodyLimit, Extension, Path, RawQuery, Request, State, rejection::BytesRejection,
+    },
     http::{HeaderValue, Method, StatusCode, Uri, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::{get, post, put},
+    routing::{MethodFilter, MethodRouter, get, post},
 };
 use rust_embed::Embed;
 use serde::de::DeserializeOwned;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use url::Url;
 
 use crate::{
-    jira,
-    model::{
-        AssignProject, CreateProject, CreateTask, DeleteProject, ProjectOrder, TriageInput,
-        UpdateProject, UpdateTask,
-    },
+    jira, ops,
     store::{Store, StoreError},
 };
 
@@ -128,129 +127,86 @@ async fn blocking<T: Send + 'static>(
         .map_err(|_| internal())
 }
 
-async fn board(State(app): State<App>) -> ApiResult<crate::model::Board> {
-    let active = app.refresh_in_progress.load(Ordering::Acquire);
-    let store = app.store.clone();
-    let local_date = chrono::Local::now().date_naive().to_string();
-    blocking(move || store.board(local_date, active))
-        .await?
-        .map(Json)
-        .map_err(|_| internal())
-}
-
-async fn create(
-    State(app): State<App>,
+/// Serve operation `op`: its arguments are the path parameters and the JSON
+/// body, or for a `GET` the query string, run through the same
+/// `ops::run` the tools use.
+async fn serve_op(
+    op: &'static ops::Op,
+    app: App,
+    params: Option<Path<HashMap<String, String>>>,
+    query: Option<String>,
     bytes: Result<Bytes, BytesRejection>,
-) -> Result<(StatusCode, Json<crate::model::Task>), Response> {
-    let bytes = body(bytes)?;
-    let input: CreateTask = parse(&bytes)?;
+) -> Response {
+    let args = match op_arguments(op, params, query, bytes) {
+        Ok(args) => args,
+        Err(response) => return response,
+    };
     let store = app.store.clone();
-    let task = blocking(move || store.create(input))
-        .await?
-        .map_err(store_error)?;
-    Ok((StatusCode::CREATED, Json(task)))
+    let refresh = app.refresh_in_progress.load(Ordering::Acquire);
+    let ran = blocking(move || {
+        let ctx = ops::Ctx {
+            store: &store,
+            refresh_in_progress: refresh,
+        };
+        ops::run(&ctx, op.name, &args)
+    })
+    .await;
+    match ran {
+        Err(response) => response,
+        Ok(Err(err)) => {
+            let (status, code, message) = err.parts();
+            let status = StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+            error(status, code, &message)
+        }
+        Ok(Ok(value)) => {
+            let status = StatusCode::from_u16(op.status).unwrap_or(StatusCode::OK);
+            if status == StatusCode::NO_CONTENT {
+                status.into_response()
+            } else {
+                (status, Json(value)).into_response()
+            }
+        }
+    }
 }
 
-async fn task(State(app): State<App>, Path(id): Path<String>) -> ApiResult<crate::model::Task> {
-    let store = app.store.clone();
-    blocking(move || store.task(&id))
-        .await?
-        .map(Json)
-        .map_err(store_error)
-}
-
-async fn update(
-    State(app): State<App>,
-    Path(id): Path<String>,
+fn op_arguments(
+    op: &'static ops::Op,
+    params: Option<Path<HashMap<String, String>>>,
+    query: Option<String>,
     bytes: Result<Bytes, BytesRejection>,
-) -> ApiResult<crate::model::Task> {
+) -> Result<Value, Response> {
+    let bad = |message: &str| error(StatusCode::BAD_REQUEST, "invalid_request", message);
     let bytes = body(bytes)?;
-    let input: UpdateTask = parse(&bytes)?;
-    let store = app.store.clone();
-    blocking(move || store.update(&id, input))
-        .await?
-        .map(Json)
-        .map_err(store_error)
+    let mut args = Map::new();
+    if op.method == "GET" {
+        for (key, value) in url::form_urlencoded::parse(query.unwrap_or_default().as_bytes()) {
+            if args.insert(key.to_string(), json!(value)).is_some() {
+                return Err(bad(&format!("{key} is given more than once.")));
+            }
+        }
+    } else {
+        match parse::<Value>(&bytes)? {
+            Value::Object(body) => args = body,
+            _ => return Err(bad("Invalid JSON request.")),
+        }
+    }
+    for (key, value) in params.map(|Path(p)| p).unwrap_or_default() {
+        if args.get(&key).is_some_and(|given| given != &json!(value)) {
+            return Err(bad(&format!("{key} is given by the path.")));
+        }
+        args.insert(key, json!(value));
+    }
+    Ok(Value::Object(args))
 }
 
-async fn triage(
-    State(app): State<App>,
-    bytes: Result<Bytes, BytesRejection>,
-) -> ApiResult<Vec<crate::model::Task>> {
-    let bytes = body(bytes)?;
-    let input: TriageInput = parse(&bytes)?;
-    let store = app.store.clone();
-    blocking(move || store.triage(input))
-        .await?
-        .map(Json)
-        .map_err(store_error)
-}
-
-async fn assign_project(
-    State(app): State<App>,
-    bytes: Result<Bytes, BytesRejection>,
-) -> ApiResult<Vec<crate::model::Task>> {
-    let bytes = body(bytes)?;
-    let input: AssignProject = parse(&bytes)?;
-    let store = app.store.clone();
-    blocking(move || store.assign_project(input))
-        .await?
-        .map(Json)
-        .map_err(store_error)
-}
-
-async fn create_project(
-    State(app): State<App>,
-    bytes: Result<Bytes, BytesRejection>,
-) -> Result<(StatusCode, Json<crate::model::Project>), Response> {
-    let bytes = body(bytes)?;
-    let input: CreateProject = parse(&bytes)?;
-    let store = app.store.clone();
-    let project = blocking(move || store.create_project(input))
-        .await?
-        .map_err(store_error)?;
-    Ok((StatusCode::CREATED, Json(project)))
-}
-
-async fn update_project(
-    State(app): State<App>,
-    Path(id): Path<String>,
-    bytes: Result<Bytes, BytesRejection>,
-) -> ApiResult<crate::model::Project> {
-    let bytes = body(bytes)?;
-    let input: UpdateProject = parse(&bytes)?;
-    let store = app.store.clone();
-    blocking(move || store.update_project(&id, input))
-        .await?
-        .map(Json)
-        .map_err(store_error)
-}
-
-async fn delete_project(
-    State(app): State<App>,
-    Path(id): Path<String>,
-    bytes: Result<Bytes, BytesRejection>,
-) -> Result<StatusCode, Response> {
-    let bytes = body(bytes)?;
-    let input: DeleteProject = parse(&bytes)?;
-    let store = app.store.clone();
-    blocking(move || store.delete_project(&id, input.version))
-        .await?
-        .map_err(store_error)?;
-    Ok(StatusCode::NO_CONTENT)
-}
-
-async fn order_projects(
-    State(app): State<App>,
-    bytes: Result<Bytes, BytesRejection>,
-) -> ApiResult<Vec<crate::model::Project>> {
-    let bytes = body(bytes)?;
-    let input: ProjectOrder = parse(&bytes)?;
-    let store = app.store.clone();
-    blocking(move || store.order_projects(&input.ids))
-        .await?
-        .map(Json)
-        .map_err(store_error)
+fn method_filter(method: &str) -> MethodFilter {
+    match method {
+        "GET" => MethodFilter::GET,
+        "POST" => MethodFilter::POST,
+        "PUT" => MethodFilter::PUT,
+        "DELETE" => MethodFilter::DELETE,
+        other => panic!("operation table names method {other}"),
+    }
 }
 
 struct RefreshGuard(Arc<AtomicBool>);
@@ -434,21 +390,33 @@ async fn guard(State(local): State<Arc<Local>>, mut request: Request, next: Next
     response
 }
 
-/// The REST API both modes serve, without any request checks.
+/// The REST API both modes serve, without any request checks: one route
+/// per entry of the operation table, and the routes it lists as HTTP only.
 pub(crate) fn api() -> Router<App> {
-    Router::new()
-        .route("/api/board", get(board))
-        .route("/api/tasks", post(create))
-        .route("/api/tasks/triage", post(triage))
-        .route("/api/tasks/project", post(assign_project))
-        .route("/api/tasks/{id}", get(task).put(update))
-        .route("/api/projects", post(create_project))
-        .route("/api/projects/order", post(order_projects))
-        .route(
-            "/api/projects/{id}",
-            put(update_project).delete(delete_project),
-        )
-        .route("/api/jira/refresh", post(refresh))
+    let mut router = Router::new();
+    let mut paths: Vec<&str> = Vec::new();
+    for op in ops::OPS {
+        if !paths.contains(&op.path) {
+            paths.push(op.path);
+        }
+    }
+    for path in paths {
+        let mut methods = MethodRouter::new();
+        for op in ops::OPS.iter().filter(|op| op.path == path) {
+            methods = methods.on(
+                method_filter(op.method),
+                move |State(app): State<App>,
+                      params: Option<Path<HashMap<String, String>>>,
+                      RawQuery(query): RawQuery,
+                      bytes: Result<Bytes, BytesRejection>| {
+                    serve_op(op, app, params, query, bytes)
+                },
+            );
+        }
+        router = router.route(path, methods);
+    }
+    // Each in `ops::HTTP_ONLY`, with why it is not a tool.
+    router.route("/api/jira/refresh", post(refresh))
 }
 
 /// The standalone server: the API and the embedded SPA, behind the loopback

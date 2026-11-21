@@ -35,7 +35,7 @@ fn the_manifest_is_contract_1_with_a_ui_and_versioned_with_the_crate() {
     let m = manifest();
     let mut keys: Vec<&str> = m.keys().map(String::as_str).collect();
     keys.sort();
-    assert_eq!(keys, ["contract", "exec", "name", "ui", "version"]);
+    assert_eq!(keys, ["contract", "exec", "name", "tool", "ui", "version"]);
     assert_eq!(m["name"].as_str(), Some("workboard"));
     assert_eq!(m["version"].as_str(), Some(env!("CARGO_PKG_VERSION")));
     assert_eq!(m["contract"].as_integer(), Some(1));

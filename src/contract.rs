@@ -1,7 +1,10 @@
-//! The caller context a Tracon node signs onto each request it forwards from
-//! its operator UI, and its check.
+//! The caller context a Tracon node signs onto each tool call and preview,
+//! and onto each request it forwards from its operator UI, and its check.
 //!
-//! Plugin contract v1: the node proxies `/t/<token>/api/<rest>` from the
+//! A `tools/call` or `tracon/preview` carries it as `params._meta.tracon`,
+//! with `tool` the unprefixed tool name and `arguments_sha256` the hash of
+//! the canonical JSON of the arguments, and optionally `preview_token` on a
+//! call dispatched from an approved card. For the UI, the node proxies `/t/<token>/api/<rest>` from the
 //! operator's browser to this plugin's socket as `/api/<rest>`, with a
 //! `tracon-context` header holding the base64url (no padding) of the signed
 //! context JSON. The object is the one Tracon signs onto `tools/call`
@@ -16,7 +19,7 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
@@ -167,10 +170,18 @@ impl NonceCache {
     }
 }
 
-/// A verified UI request: the operator, on this channel.
+/// Who a verified request is from, as the node signed it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Caller {
+    /// `operator`, `agent` or `plugin`.
+    pub kind: String,
+    pub session: Option<String>,
+    pub harness: Option<String>,
     pub channel: String,
+    /// The card the call was allowed on, if any.
+    pub approval_id: Option<String>,
+    /// The token of the preview that card showed, if any.
+    pub preview_token: Option<String>,
 }
 
 /// Why a request was refused, and the check (1–7) that refused it.
@@ -191,6 +202,14 @@ fn is_hex(s: &str, len: usize) -> bool {
     s.len() == len && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
+/// The hash a tool call's context carries of its arguments; missing or null
+/// arguments count as `{}`.
+pub fn arguments_sha256(arguments: Option<&Value>) -> String {
+    let empty = json!({});
+    let arguments = arguments.filter(|a| !a.is_null()).unwrap_or(&empty);
+    sha256_hex(canonical(arguments).as_bytes())
+}
+
 /// Check a UI request's context, in the order the contract fixes:
 ///
 /// 1. `v` is 1 and `plugin` is this plugin (and the context is well formed)
@@ -204,6 +223,58 @@ fn is_hex(s: &str, len: usize) -> bool {
 /// 7. the caller is the operator
 pub fn verify_ui(
     meta: &Value,
+    arguments_sha256: &str,
+    env: &ContractEnv,
+    now_ms: i64,
+    nonces: &NonceCache,
+) -> Result<Caller, Refusal> {
+    let caller = verify(meta, UI_TOOL, arguments_sha256, env, now_ms, nonces)?;
+    // 7
+    if caller.kind != "operator" {
+        return refuse(7, "only the operator may use the Workboard UI");
+    }
+    Ok(caller)
+}
+
+/// Check the context of a `tools/call` or `tracon/preview` of `tool` with
+/// `arguments`, checks 1 to 6 as for [`verify_ui`], then 7: a call of a
+/// tool that writes carries an `approval_id` (`write` is false for a
+/// preview, which writes nothing).
+pub fn verify_call(
+    meta: &Value,
+    tool: &str,
+    arguments: Option<&Value>,
+    write: bool,
+    env: &ContractEnv,
+    now_ms: i64,
+    nonces: &NonceCache,
+) -> Result<Caller, Refusal> {
+    if tool == UI_TOOL {
+        return refuse(3, format!("{UI_TOOL} is not a tool"));
+    }
+    let caller = verify(
+        meta,
+        tool,
+        &arguments_sha256(arguments),
+        env,
+        now_ms,
+        nonces,
+    )?;
+    // 7
+    if write && caller.approval_id.is_none() {
+        return refuse(
+            7,
+            format!("{tool} writes, and this call carries no approval"),
+        );
+    }
+    Ok(caller)
+}
+
+/// Checks 1 to 6, for a context that must be for `tool` with arguments
+/// hashing to `arguments_sha256`.
+fn verify(
+    meta: &Value,
+    tool_wanted: &str,
     arguments_sha256: &str,
     env: &ContractEnv,
     now_ms: i64,
@@ -223,6 +294,13 @@ pub fn verify_ui(
         return refuse(1, "caller context holds a non-integer number");
     }
     let str_of = |k: &str| ctx.get(k).and_then(Value::as_str);
+    let opt_str = |v: Option<&Value>, k: &str| -> Result<Option<String>, Refusal> {
+        match v {
+            None | Some(Value::Null) => Ok(None),
+            Some(Value::String(s)) => Ok(Some(s.clone())),
+            Some(_) => refuse(1, format!("caller context {k} is not a string or null")),
+        }
+    };
     let (Some(instance), Some(tool), Some(args_hash), Some(channel), Some(nonce), Some(sig)) = (
         str_of("instance"),
         str_of("tool"),
@@ -239,14 +317,16 @@ pub fn verify_ui(
     ) else {
         return refuse(1, "caller context has no integer issued_ms and expires_ms");
     };
-    let Some(kind) = ctx
-        .get("caller")
-        .and_then(Value::as_object)
-        .and_then(|c| c.get("kind"))
-        .and_then(Value::as_str)
-    else {
+    let Some(caller) = ctx.get("caller").and_then(Value::as_object) else {
         return refuse(1, "caller context has no caller kind");
     };
+    let Some(kind) = caller.get("kind").and_then(Value::as_str) else {
+        return refuse(1, "caller context has no caller kind");
+    };
+    let session = opt_str(caller.get("session"), "caller.session")?;
+    let harness = opt_str(caller.get("harness"), "caller.harness")?;
+    let approval_id = opt_str(ctx.get("approval_id"), "approval_id")?;
+    let preview_token = opt_str(ctx.get("preview_token"), "preview_token")?;
 
     // 2
     if instance != env.instance {
@@ -254,10 +334,10 @@ pub fn verify_ui(
     }
 
     // 3
-    if tool != UI_TOOL {
+    if tool != tool_wanted {
         return refuse(
             3,
-            format!("caller context is for tool {tool}, not {UI_TOOL}"),
+            format!("caller context is for tool {tool}, not {tool_wanted}"),
         );
     }
     if args_hash != arguments_sha256 {
@@ -274,7 +354,7 @@ pub fn verify_ui(
     };
     if env
         .node_key
-        .verify(&signing_bytes(meta), &signature)
+        .verify_strict(&signing_bytes(meta), &signature)
         .is_err()
     {
         return refuse(
@@ -302,13 +382,13 @@ pub fn verify_ui(
         return refuse(6, "caller context nonce was already used");
     }
 
-    // 7
-    if kind != "operator" {
-        return refuse(7, "only the operator may use the Workboard UI");
-    }
-
     Ok(Caller {
+        kind: kind.to_string(),
+        session,
+        harness,
         channel: channel.to_string(),
+        approval_id,
+        preview_token,
     })
 }
 

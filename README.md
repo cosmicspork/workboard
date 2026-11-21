@@ -29,7 +29,7 @@ Workboard also ships as a [Tracon](https://github.com/cosmicspork/tracon) plugin
 tracon plugin add cosmicspork/workboard
 ```
 
-The board then appears in Tracon's **Plugins** section, one instance per channel. The node starts `workboard serve --socket <path> --data <dir>`, serves the SPA from the release archive's `ui/` itself, and forwards the SPA's API requests to Workboard as the operator, each carrying a context the node signs. Workboard answers only those requests (any other request to `/api` is refused with 401) and offers no MCP tools.
+The board then appears in Tracon's **Plugins** section, one instance per channel. The node starts `workboard serve --socket <path> --data <dir>`, serves the SPA from the release archive's `ui/` itself, and forwards the SPA's API requests to Workboard as the operator, each carrying a context the node signs. Workboard answers only those requests on `/api` (any other is refused with 401), and offers the board's operations as tools (see [Agent tools](#agent-tools)).
 
 Configure an instance in `<data>/plugin.toml`; the node gives plugins no other way:
 
@@ -43,6 +43,46 @@ Without `jira_site` the board works, Jira keys show without links, and **Refresh
 To move an existing standalone board into an instance, stop both, then copy `~/.local/share/workboard/workboard.sqlite3` and any `-wal`/`-shm` sidecars into the instance's `<data>` directory under the same names. Keep the files private (0600).
 
 Links that open in a new tab (Jira keys, task links) do not open from inside Tracon's frame for now; copy them instead, or use the standalone board.
+
+## Agent tools
+
+An agent reads and changes the board through the same operations as the page, as itself: every HTTP route is one tool, and every tool is one route. Both come from one table (`src/ops.rs`) and run the same store functions, and `tests/parity.rs` fails when the manifest, either tool list, the routes the server answers, or a call the SPA makes drifts from it.
+
+| Tool | Route | Does |
+|---|---|---|
+| `board` | `GET /api/board` | The board: projects, tasks and the last refresh. Optional filters `project` (an id, or `none`), `tag` and `state`, as query parameters or arguments. |
+| `task` | `GET /api/tasks/{id}` | One task. |
+| `projects` | `GET /api/projects` | The projects in priority order. |
+| `task_create` | `POST /api/tasks` | Add a task to Inbox. |
+| `task_update` | `PUT /api/tasks/{id}` | Replace a task's own fields. Every field is sent, with the task's `version`. |
+| `task_triage` | `POST /api/tasks/triage` | Move tasks to Next, Later or Done and set their review date. |
+| `task_assign_project` | `POST /api/tasks/project` | Choose or clear a project for tasks. |
+| `project_create` | `POST /api/projects` | Add a project. |
+| `project_update` | `PUT /api/projects/{id}` | Rename a project or change its target or Jira keys. |
+| `project_delete` | `DELETE /api/projects/{id}` | Delete a project. |
+| `project_order` | `POST /api/projects/order` | Set the projects' priority order. |
+
+A tool's arguments are the route's path parameters plus its JSON body (or its query string, for a `GET`): `PUT /api/tasks/{id}` with `{"version": 3, ...}` is `task_update` with `{"id": "...", "version": 3, ...}`. Two things are on one side only, on purpose (`ops::HTTP_ONLY`, `ops::TOOL_ONLY`):
+
+- `POST /api/jira/refresh` is not a tool. A refresh reads Jira through the node's operator route, so an agent's call would reach Jira as the operator. An agent that wants fresh Jira facts calls jira-review's `search` under its own policy.
+- `proposal_status` is a tool of the standalone `mcp` mode only, for hearing what the person decided in `workboard review`.
+
+Under Tracon (`serve --socket`), the tools are `workboard__board` and so on:
+
+- **Reads** answer the agent directly. Tracon asks the operator about any plugin tool its policy does not name, so add `allow = ["board", "task", "projects"]` to the `[[plugin]]` entry for `workboard` to let them run unattended.
+- **Writes** are consequential: every call is a card for the operator, never allowed by name. The card shows Workboard's preview of the change, the current values next to the proposed ones (`tracon/preview`), and `next_action` and `notes` are marked as Markdown so the card renders them. A write runs only from an approved card (Workboard refuses one with no `approval_id`), and only against what that card showed: if the task's `version` has moved, or the preview no longer matches the board, it is refused as stale (`data.stale`) and nothing is written. The agent reads again and asks anew.
+- **Who** is the caller the node attests in the signed context, never a name in the arguments. Workboard keeps no history of edits, so it logs each write with that caller, session, harness and approval in the plugin log (`tracon plugin logs workboard`); the node's own log records the call too. The page's API answers only the operator (`tracon/ui`), so an agent cannot borrow the operator's identity through it.
+
+Without Tracon, `workboard mcp` is an MCP server on stdin and stdout with the same tools, for any agent client. Reads answer from the board; a write returns a `proposal_id` and its preview, and waits in `<data-dir>/proposals/` for you:
+
+```sh
+workboard review                 # what is waiting
+workboard review show <id>       # the change, and whether the board has moved since
+workboard review approve <id>    # apply it, unless the board has moved (then: stale)
+workboard review reject <id> --reason "not now"
+```
+
+The agent hears the decision with `proposal_status`. `workboard op` lists the operations and `workboard op <name> '<json>'` runs one as you, as the page would. `mcp`, `review` and `op` take `--data-dir` (or `WORKBOARD_DATA_DIR`) and an optional `--jira-site` for browse links, and need no Tracon.
 
 ## Daily use
 
@@ -70,6 +110,6 @@ bun run --cwd spa check
 bun test --cwd spa
 ```
 
-The API is single-user and local-only: JSON under `/api`, optimistic task versions for edits, `GET /api/tasks/{id}` to read one task by the Workboard ID shown in its editor, 64 KiB request cap, same-origin mutation protection (in plugin mode, the node's signed caller context instead), and no login or CORS surface. The SPA uses only relative URLs, since Tracon serves it under a path prefix. Frontend list selection, grouping, and filtering live in `spa/src/lib/views.ts`; transactional persistence, project resolution, and snapshot reconciliation live in `src/store.rs`.
+The API is single-user and local-only: JSON under `/api`, one route per operation in `src/ops.rs` (add an operation there, not a route in `src/http.rs`), optimistic task versions for edits, `GET /api/tasks/{id}` to read one task by the Workboard ID shown in its editor, 64 KiB request cap, same-origin mutation protection (in plugin mode, the node's signed caller context instead), and no login or CORS surface. The SPA uses only relative URLs, since Tracon serves it under a path prefix. Frontend list selection, grouping, and filtering live in `spa/src/lib/views.ts`; transactional persistence, project resolution, and snapshot reconciliation live in `src/store.rs`.
 
 Releases are cut with [release-please](https://github.com/googleapis/release-please). Each merge to `main` updates a release PR that bumps the version in `Cargo.toml`, `Cargo.lock`, `tracon-plugin.toml` and `spa/package.json` together and writes `CHANGELOG.md` from the conventional-commit PR titles (`feat` bumps the minor version, `fix` the patch, and before 1.0 a breaking change bumps the minor). Merging the release PR tags `v<version>`, creates the GitHub release, and the release workflow attaches `workboard-<version>-<target>.tar.gz` for each target (holding `tracon-plugin.toml`, `bin/workboard` and `ui/`) with `checksums.txt` and build provenance attestations.
