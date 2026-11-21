@@ -2,7 +2,15 @@
 //! plugin (contract v1). The node serves the SPA from the installed archive's
 //! `ui/` and forwards the SPA's `api/...` requests here over a Unix socket,
 //! each with a signed caller context. This process answers MCP at `POST /`
-//! (with no tools) and the REST API at `/api/*`, and nothing else.
+//! and the REST API at `/api/*`, and nothing else.
+//!
+//! The tools are the operation table's, one per API route (`ops::OPS`). A
+//! tool call carries its own signed context in `params._meta.tracon`, whose
+//! caller is the agent the node names; a write runs only on an approved card
+//! (`approval_id`), and only against the preview that card showed. The API
+//! answers only the operator's page (`tool = "tracon/ui"`, kind
+//! `operator`), so an agent never borrows the operator's identity through
+//! it.
 
 use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::path::Path;
@@ -19,12 +27,13 @@ use axum::{
     routing::post,
 };
 use base64::Engine;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::{
     config::PluginConfig,
     contract::{self, ContractEnv, NonceCache},
     http::{self, App, BODY_LIMIT, JiraChannel, JiraSite},
+    mcp,
     store::Store,
 };
 
@@ -85,12 +94,18 @@ pub fn app(data: &Path) -> Result<App> {
 /// The plugin-mode router: MCP at `POST /`, the API behind the caller-context
 /// check, and no SPA.
 pub fn router(app: App, gate: Arc<Gate>) -> Router {
+    let host = Arc::new(mcp::Plugin {
+        store: app.store.clone(),
+        refresh_in_progress: app.refresh_in_progress.clone(),
+        env: gate.env.clone(),
+        nonces: NonceCache::default(),
+    });
     http::api()
-        .route("/", post(mcp))
+        .with_state(app)
+        .route("/", post(serve_mcp).with_state(host))
         .fallback(fallback)
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
         .layer(middleware::from_fn_with_state(gate, check))
-        .with_state(app)
 }
 
 pub async fn run(socket: &Path, data: &Path) -> Result<()> {
@@ -200,64 +215,23 @@ async fn fallback(uri: Uri) -> Response {
     }
 }
 
-/// The MCP protocol revisions this server knows, newest first.
-const PROTOCOL_VERSIONS: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
-
 /// One JSON-RPC message per POST: its answer as JSON, or 202 for a
-/// notification. Workboard offers no tools; it is a plugin for its UI.
-async fn mcp(body: Bytes) -> Response {
+/// notification.
+async fn serve_mcp(State(host): State<Arc<mcp::Plugin>>, body: Bytes) -> Response {
     let message: Value = match serde_json::from_slice(&body) {
         Ok(message) => message,
         Err(e) => {
             return (
                 StatusCode::BAD_REQUEST,
-                Json(rpc_error(Value::Null, -32700, &format!("parse error: {e}"))),
+                Json(mcp::parse_error(&e.to_string())),
             )
                 .into_response();
         }
     };
-    match answer(&message) {
+    match mcp::handle(&*host, message).await {
         Some(answer) => Json(answer).into_response(),
         None => StatusCode::ACCEPTED.into_response(),
     }
-}
-
-fn rpc_error(id: Value, code: i64, message: &str) -> Value {
-    json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } })
-}
-
-/// The answer to one JSON-RPC message; `None` for a notification or a
-/// response, which get no answer.
-pub fn answer(message: &Value) -> Option<Value> {
-    let Some(method) = message.get("method").and_then(Value::as_str) else {
-        if message.get("result").is_some() || message.get("error").is_some() {
-            return None;
-        }
-        let id = message.get("id").cloned().unwrap_or(Value::Null);
-        return Some(rpc_error(id, -32600, "invalid request"));
-    };
-    let id = message.get("id").cloned()?;
-    let result = match method {
-        "initialize" => {
-            let asked = message["params"]["protocolVersion"]
-                .as_str()
-                .unwrap_or_default();
-            let version = PROTOCOL_VERSIONS
-                .into_iter()
-                .find(|v| *v == asked)
-                .unwrap_or(PROTOCOL_VERSIONS[0]);
-            json!({
-                "protocolVersion": version,
-                "capabilities": { "tools": {} },
-                "serverInfo": { "name": contract::PLUGIN, "version": env!("CARGO_PKG_VERSION") },
-            })
-        }
-        "ping" => json!({}),
-        "tools/list" => json!({ "tools": [] }),
-        "tools/call" => return Some(rpc_error(id, -32602, "Workboard has no tools")),
-        other => return Some(rpc_error(id, -32601, &format!("no method {other}"))),
-    };
-    Some(json!({ "jsonrpc": "2.0", "id": id, "result": result }))
 }
 
 #[cfg(test)]
@@ -289,15 +263,5 @@ mod tests {
         assert!(Gate::from_env(env(&one)).is_ok());
         let two = [("TRACON_CONTRACT", "2"), ok[0], ok[1]];
         assert!(Gate::from_env(env(&two)).is_err());
-    }
-
-    #[test]
-    fn notifications_get_no_answer() {
-        assert_eq!(
-            answer(&json!({ "jsonrpc": "2.0", "method": "notifications/initialized" })),
-            None
-        );
-        let ping = answer(&json!({ "jsonrpc": "2.0", "id": 3, "method": "ping" })).unwrap();
-        assert_eq!(ping["result"], json!({}));
     }
 }

@@ -379,6 +379,18 @@ impl Store {
         read_sync(&connection, false)
     }
 
+    /// Refuse a project `name` or Jira `keys` another project already has,
+    /// as creating or updating project `id` would. Writes nothing.
+    pub fn check_project(
+        &self,
+        id: Option<&str>,
+        name: &str,
+        keys: &[String],
+    ) -> Result<(), StoreError> {
+        let connection = self.lock()?;
+        check_project_conflicts(&connection, id, name, keys)
+    }
+
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, Connection>, StoreError> {
         self.connection
             .lock()
@@ -426,7 +438,7 @@ fn validate_date(date: &str) -> Result<(), StoreError> {
     }
     Ok(())
 }
-fn validate_optional_date(date: Option<&str>) -> Result<(), StoreError> {
+pub(crate) fn validate_optional_date(date: Option<&str>) -> Result<(), StoreError> {
     if let Some(date) = date {
         validate_date(date)?;
     }
@@ -463,14 +475,14 @@ fn validate_links(links: &[Link]) -> Result<(), StoreError> {
     }
     Ok(())
 }
-fn validate_create(input: &CreateTask) -> Result<(), StoreError> {
+pub(crate) fn validate_create(input: &CreateTask) -> Result<(), StoreError> {
     validate_nonempty(&input.title, "title")?;
     validate_text(&input.title, "title", 500)?;
     validate_text(&input.next_action, "next action", 16 * 1024)?;
     validate_text(&input.notes, "notes", 16 * 1024)?;
     validate_links(&input.links)
 }
-fn validate_update(input: &UpdateTask) -> Result<(), StoreError> {
+pub(crate) fn validate_update(input: &UpdateTask) -> Result<(), StoreError> {
     if input.version < 1 {
         return Err(StoreError::Invalid("version must be positive".into()));
     }
@@ -494,7 +506,7 @@ fn validate_update(input: &UpdateTask) -> Result<(), StoreError> {
     validate_optional_date(input.review_on.as_deref())?;
     validate_links(&input.links)
 }
-fn validate_selection(items: &[crate::model::VersionedId]) -> Result<(), StoreError> {
+pub(crate) fn validate_selection(items: &[crate::model::VersionedId]) -> Result<(), StoreError> {
     if items.len() > 200 {
         return Err(StoreError::Invalid(
             "at most 200 tasks may be changed at once".into(),
@@ -555,13 +567,13 @@ fn validate_sources(issues: &[SourceIssue]) -> Result<(), StoreError> {
     }
     Ok(())
 }
-fn validate_project_name(name: &str) -> Result<String, StoreError> {
+pub(crate) fn validate_project_name(name: &str) -> Result<String, StoreError> {
     let name = name.trim();
     validate_nonempty(name, "project name")?;
     validate_text(name, "project name", 200)?;
     Ok(name.to_owned())
 }
-fn normalize_jira_keys(keys: &[String]) -> Result<Vec<String>, StoreError> {
+pub(crate) fn normalize_jira_keys(keys: &[String]) -> Result<Vec<String>, StoreError> {
     if keys.len() > MAX_PROJECT_KEYS {
         return Err(StoreError::Invalid(format!(
             "at most {MAX_PROJECT_KEYS} Jira keys are allowed per project"
@@ -621,7 +633,7 @@ fn check_project_conflicts(
     }
     Ok(())
 }
-fn normalize_tags(tags: &[String]) -> Result<Vec<String>, StoreError> {
+pub(crate) fn normalize_tags(tags: &[String]) -> Result<Vec<String>, StoreError> {
     let mut normalized: Vec<String> = Vec::with_capacity(tags.len());
     for tag in tags {
         let tag = tag.trim().to_lowercase();

@@ -91,6 +91,31 @@ pub fn unsigned(method: &str, target: &str, body: &[u8]) -> Value {
     })
 }
 
+/// The context a node would sign onto a `tools/call` or `tracon/preview` of
+/// `tool` with `arguments` from an agent, before signing.
+pub fn unsigned_call(
+    tool: &str,
+    arguments: &Value,
+    approval_id: Option<&str>,
+    preview_token: Option<&str>,
+) -> Value {
+    let now = now_ms();
+    let mut context = json!({
+        "v": 1, "plugin": "workboard", "instance": contract::instance_of(TOKEN),
+        "tool": tool,
+        "arguments_sha256": contract::arguments_sha256(Some(arguments)),
+        "caller": { "kind": "agent", "session": "s-1", "harness": "claude" },
+        "channel": "work", "approval_id": approval_id,
+        "issued_ms": now, "expires_ms": now + 30_000,
+        "nonce": uuid::Uuid::new_v4().simple().to_string(),
+        "credentials": {},
+    });
+    if let Some(token) = preview_token {
+        context["preview_token"] = json!(token);
+    }
+    context
+}
+
 pub fn header(context: &Value) -> (&'static str, String) {
     (
         "tracon-context",
@@ -183,6 +208,37 @@ impl Plugin {
     pub async fn api(&self, method: &str, target: &str, body: &str) -> (u16, Value) {
         let context = contract::sign(&unsigned(method, target, body.as_bytes()), &key());
         self.api_with(method, target, body, &context).await
+    }
+
+    /// `method` (`tools/call` or `tracon/preview`) of `tool`, signed as the
+    /// node signs an agent's call.
+    pub async fn tool_with(
+        &mut self,
+        method: &str,
+        tool: &str,
+        arguments: Value,
+        approval_id: Option<&str>,
+        preview_token: Option<&str>,
+    ) -> Value {
+        let context = contract::sign(
+            &unsigned_call(tool, &arguments, approval_id, preview_token),
+            &key(),
+        );
+        let params = json!({ "name": tool, "arguments": arguments,
+                             "_meta": { "tracon": context } });
+        let (status, answer) = self.rpc(method, params).await;
+        assert_eq!(status, 200, "{answer}");
+        answer
+    }
+
+    /// A read tool's result, which must succeed.
+    pub async fn read(&mut self, tool: &str, arguments: Value) -> Value {
+        let answer = self
+            .tool_with("tools/call", tool, arguments, None, None)
+            .await;
+        assert_eq!(answer["result"]["isError"], false, "{answer}");
+        let text = answer["result"]["content"][0]["text"].as_str().unwrap();
+        serde_json::from_str(text).unwrap()
     }
 
     pub async fn task_count(&self) -> usize {

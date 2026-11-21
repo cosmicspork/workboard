@@ -9,3 +9,61 @@ exec = ["bin/workboard", "serve"]
 [ui]
 entry = "ui/index.html"
 title = "Workboard"
+
+# The tools are the HTTP API's operations, one per route (src/ops.rs), so an
+# agent can do what the page does, as itself. Reads answer directly. Every
+# write is consequential: each call is a card showing the change before and
+# after, and it applies only against that preview and the task's version.
+# tests/parity.rs keeps this list, `tools/list` and the routes in step.
+
+[[tool]]
+name = "board"
+hint = "read"
+
+[[tool]]
+name = "task"
+hint = "read"
+
+[[tool]]
+name = "projects"
+hint = "read"
+
+[[tool]]
+name = "task_create"
+hint = "write"
+consequential = true
+
+[[tool]]
+name = "task_update"
+hint = "write"
+consequential = true
+
+[[tool]]
+name = "task_triage"
+hint = "write"
+consequential = true
+
+[[tool]]
+name = "task_assign_project"
+hint = "write"
+consequential = true
+
+[[tool]]
+name = "project_create"
+hint = "write"
+consequential = true
+
+[[tool]]
+name = "project_update"
+hint = "write"
+consequential = true
+
+[[tool]]
+name = "project_delete"
+hint = "write"
+consequential = true
+
+[[tool]]
+name = "project_order"
+hint = "write"
+consequential = true
