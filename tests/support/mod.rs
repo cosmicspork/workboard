@@ -134,13 +134,27 @@ impl Plugin {
     /// Start `exec` on a socket in `dir` and wait until `initialize` answers,
     /// which is what ready means.
     pub async fn start_exec(exec: &Path, dir: &Path, plugin_toml: Option<&str>) -> Self {
+        Self::start_full(exec, dir, plugin_toml, None).await
+    }
+
+    /// As [`Self::start_exec`], with `--node-socket` when `node_socket` is set.
+    pub async fn start_full(
+        exec: &Path,
+        dir: &Path,
+        plugin_toml: Option<&str>,
+        node_socket: Option<&Path>,
+    ) -> Self {
         let socket = dir.join("workboard.sock");
         let data = dir.join("data");
         if let Some(text) = plugin_toml {
             std::fs::create_dir_all(&data).unwrap();
             std::fs::write(data.join("plugin.toml"), text).unwrap();
         }
-        let child = command(exec, &socket, &data).spawn().unwrap();
+        let mut command = command(exec, &socket, &data);
+        if let Some(node_socket) = node_socket {
+            command.arg("--node-socket").arg(node_socket);
+        }
+        let child = command.spawn().unwrap();
         let plugin = Self {
             child,
             socket,
@@ -167,6 +181,16 @@ impl Plugin {
 
     pub async fn start(dir: &Path, plugin_toml: Option<&str>) -> Self {
         Self::start_exec(Path::new(BIN), dir, plugin_toml).await
+    }
+
+    /// Started with `--node-socket node_socket`, as a node starts a plugin
+    /// whose manifest names a node method.
+    pub async fn start_with_node(
+        dir: &Path,
+        plugin_toml: Option<&str>,
+        node_socket: &Path,
+    ) -> Self {
+        Self::start_full(Path::new(BIN), dir, plugin_toml, Some(node_socket)).await
     }
 
     pub async fn post_json(&self, target: &str, body: &Value) -> std::io::Result<(u16, Value)> {
@@ -246,4 +270,118 @@ impl Plugin {
         assert_eq!(status, 200, "{board}");
         board["tasks"].as_array().unwrap().len()
     }
+}
+
+/// What a fake node's socket was sent: each request's bearer token and its
+/// JSON-RPC body.
+pub type NodeRequest = (Option<String>, Value);
+
+#[derive(Clone, Default)]
+pub struct NodeSeen(pub std::sync::Arc<std::sync::Mutex<Vec<NodeRequest>>>);
+
+impl NodeSeen {
+    pub fn requests(&self) -> Vec<NodeRequest> {
+        self.0.lock().unwrap().clone()
+    }
+}
+
+/// How a fake node answers a request: an HTTP status and a body.
+pub type NodeReply = std::sync::Arc<dyn Fn(&Value) -> (u16, Value) + Send + Sync>;
+
+/// A stand-in for the node's plugin-to-node socket at `socket`, answering
+/// `POST /` with `reply`.
+pub async fn fake_node(socket: &Path, reply: NodeReply) -> NodeSeen {
+    use axum::{Json, Router, extract::State, http::HeaderMap, routing::post};
+    let seen = NodeSeen::default();
+    let app = Router::new()
+        .route(
+            "/",
+            post(
+                |State((seen, reply)): State<(NodeSeen, NodeReply)>,
+                 headers: HeaderMap,
+                 Json(body): Json<Value>| async move {
+                    let bearer = headers
+                        .get("authorization")
+                        .and_then(|v| v.to_str().ok())
+                        .and_then(|v| v.strip_prefix("Bearer "))
+                        .map(str::to_owned);
+                    seen.0.lock().unwrap().push((bearer, body.clone()));
+                    let (status, answer) = reply(&body);
+                    (
+                        axum::http::StatusCode::from_u16(status).unwrap(),
+                        Json(answer),
+                    )
+                },
+            ),
+        )
+        .with_state((seen.clone(), reply));
+    let listener = tokio::net::UnixListener::bind(socket).unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    seen
+}
+
+pub const SITE: &str = "https://example.atlassian.net";
+
+pub fn issue(id: &str, key: &str, category: &str) -> Value {
+    json!({
+        "id": id, "key": key, "summary": "A summary", "status": "In Progress",
+        "status_category": category, "priority": "Planned", "issue_type": "Task",
+        "labels": ["phase-3"],
+        "parent": {"key": "ABC-1", "summary": "The epic", "issue_type": "Epic"}
+    })
+}
+
+pub fn page(issues: Vec<Value>, next: Option<&str>) -> Value {
+    json!({"site": SITE, "account_email": "user@example.com", "issues": issues, "next_cursor": next})
+}
+
+/// A `tools/call` answer from the node carrying `page` as jira-review does,
+/// as JSON text.
+pub fn page_answer(id: &Value, page: &Value) -> Value {
+    json!({ "jsonrpc": "2.0", "id": id,
+            "result": { "content": [{ "type": "text", "text": page.to_string() }] } })
+}
+
+/// Two pages joined by the cursor `next-page`.
+pub fn two_pages() -> NodeReply {
+    std::sync::Arc::new(|request: &Value| {
+        let cursor = request["params"]["arguments"]["cursor"].as_str();
+        let body = match cursor {
+            None => page(vec![issue("1", "ABC-2", "new")], Some("next-page")),
+            Some("next-page") => page(vec![issue("2", "ABC-3", "done")], None),
+            Some(other) => panic!("unexpected cursor {other}"),
+        };
+        (200, page_answer(&request["id"], &body))
+    })
+}
+
+const FAKE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/support/fake_jira_review.py"
+);
+
+/// A `jira-review` stand-in for `mode` that logs to `log`: a shell script
+/// running the Python fake with its own options first.
+pub fn fake_jira_review(dir: &Path, mode: &str) -> (PathBuf, PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let log = dir.join(format!("{mode}.log"));
+    let program = dir.join(format!("jira-review-{mode}"));
+    std::fs::write(
+        &program,
+        format!(
+            "#!/bin/sh\nexec python3 '{FAKE}' --log '{}' --mode {mode} \"$@\"\n",
+            log.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    (program, log)
+}
+
+pub fn logged(log: &Path) -> Vec<Value> {
+    std::fs::read_to_string(log)
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect()
 }

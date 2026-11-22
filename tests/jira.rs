@@ -1,80 +1,54 @@
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-};
+//! A refresh's two ways to jira-review's `search`: the node's `tools/call`
+//! on the plugin-to-node socket, and a `jira-review mcp` child.
 
-use axum::{
-    Json, Router,
-    extract::{Query, State},
-    http::{HeaderMap, StatusCode, header},
-    response::{IntoResponse, Response},
-    routing::get,
-};
+mod support;
+
+use std::path::Path;
+use std::sync::Arc;
+
 use serde_json::{Value, json};
+use support::{
+    NodeReply, SITE, fake_jira_review, fake_node, issue, logged, page, page_answer, two_pages,
+};
 use url::Url;
-use workboard::jira::{fetch, parse_page};
+use workboard::jira::{NODE_TOOL, Source, fetch, parse_page, search_arguments};
 
-const SITE: &str = "https://example.atlassian.net";
+const JQL: &str = "assignee = currentUser() ORDER BY updated DESC";
 
 fn site() -> Url {
     Url::parse(SITE).unwrap()
 }
 
-fn issue(id: &str, key: &str, category: &str) -> Value {
-    json!({
-        "id": id, "key": key, "summary": "A summary", "status": "In Progress",
-        "status_category": category, "priority": "Planned", "issue_type": "Task",
-        "labels": ["phase-3"],
-        "parent": {"key": "ABC-1", "summary": "The epic", "issue_type": "Epic"}
-    })
+fn node(socket: &Path, profile: Option<&str>) -> Source {
+    Source::Node {
+        socket: Some(socket.to_path_buf()),
+        token: "node-token".into(),
+        profile: profile.map(str::to_owned),
+    }
 }
 
-fn page(issues: Vec<Value>, next: Option<&str>) -> Value {
-    json!({"site": SITE, "account_email": "user@example.com", "issues": issues, "next_cursor": next})
+fn reply(f: impl Fn(&Value) -> (u16, Value) + Send + Sync + 'static) -> NodeReply {
+    Arc::new(f)
 }
 
-/// A search request's query, and whether it carried an Origin header.
-type Search = (HashMap<String, String>, bool);
-
-#[derive(Clone, Default)]
-struct Seen(Arc<Mutex<Vec<Search>>>);
-
-type Reply = fn(Option<&str>) -> Response;
-
-async fn serve(reply: Reply) -> (Url, Seen) {
-    let seen = Seen::default();
-    let app = Router::new()
-        .route(
-            "/api/jira/search",
-            get(
-                |State((seen, reply)): State<(Seen, Reply)>,
-                 headers: HeaderMap,
-                 Query(query): Query<HashMap<String, String>>| async move {
-                    let cursor = query.get("cursor").cloned();
-                    seen.0
-                        .lock()
-                        .unwrap()
-                        .push((query, headers.contains_key(header::ORIGIN)));
-                    reply(cursor.as_deref())
-                },
-            ),
-        )
-        .with_state((seen.clone(), reply));
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = Url::parse(&format!("http://{}/", listener.local_addr().unwrap())).unwrap();
-    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    (url, seen)
+#[test]
+fn search_arguments_name_profile_only_when_set() {
+    assert_eq!(
+        search_arguments(None, None),
+        json!({ "jql": JQL, "page": true })
+    );
+    assert_eq!(
+        search_arguments(Some("c"), Some("work")),
+        json!({ "jql": JQL, "page": true, "cursor": "c", "profile": "work" })
+    );
 }
 
 #[tokio::test]
-async fn follows_cursors_and_maps_labels_and_parent() {
-    let (tracon, seen) = serve(|cursor| match cursor {
-        None => Json(page(vec![issue("1", "ABC-2", "new")], Some("next-page"))).into_response(),
-        Some("next-page") => Json(page(vec![issue("2", "ABC-3", "done")], None)).into_response(),
-        Some(_) => StatusCode::BAD_REQUEST.into_response(),
-    })
-    .await;
-    let (identity, issues) = fetch(&tracon, "work", &site(), None).await.unwrap();
+async fn node_calls_follow_cursors_with_the_token_and_no_profile() {
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("node.sock");
+    let seen = fake_node(&socket, two_pages()).await;
+    let (identity, issues) = fetch(&node(&socket, None), &site(), None).await.unwrap();
     assert_eq!(identity.site, "example.atlassian.net");
     assert_eq!(identity.account_email, "user@example.com");
     assert_eq!(issues.len(), 2);
@@ -83,73 +57,294 @@ async fn follows_cursors_and_maps_labels_and_parent() {
     assert_eq!(parent.key, "ABC-1");
     assert_eq!(parent.issue_type.as_deref(), Some("Epic"));
     assert_eq!(issues[1].status_category, "done");
-    let seen = seen.0.lock().unwrap();
-    assert_eq!(seen.len(), 2);
-    assert_eq!(seen[0].0["channel"], "work");
+
+    let requests = seen.requests();
+    assert_eq!(requests.len(), 2);
+    for (bearer, request) in &requests {
+        assert_eq!(bearer.as_deref(), Some("node-token"));
+        assert_eq!(request["jsonrpc"], "2.0");
+        assert_eq!(request["method"], "tools/call");
+        assert_eq!(request["params"]["name"], NODE_TOOL);
+        // Only the keys the node's tools/call takes.
+        let mut keys: Vec<&String> = request["params"].as_object().unwrap().keys().collect();
+        keys.sort();
+        assert_eq!(keys, ["arguments", "name"]);
+    }
+    assert_ne!(requests[0].1["id"], requests[1].1["id"]);
     assert_eq!(
-        seen[0].0["jql"],
-        "assignee = currentUser() ORDER BY updated DESC"
+        requests[0].1["params"]["arguments"],
+        json!({ "jql": JQL, "page": true })
     );
-    assert!(!seen[0].0.contains_key("cursor"));
-    assert_eq!(seen[1].0["cursor"], "next-page");
-    assert!(seen.iter().all(|(_, origin)| !origin));
+    assert_eq!(
+        requests[1].1["params"]["arguments"],
+        json!({ "jql": JQL, "page": true, "cursor": "next-page" })
+    );
 }
 
 #[tokio::test]
-async fn bound_identity_change_stops_after_the_first_page() {
-    let (tracon, seen) =
-        serve(|_| Json(page(vec![issue("1", "ABC-2", "new")], Some("more"))).into_response()).await;
-    let err = fetch(&tracon, "work", &site(), Some((SITE, "other@example.com")))
+async fn node_calls_pass_the_profile_and_read_structured_content() {
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("node.sock");
+    let seen = fake_node(
+        &socket,
+        reply(|request| {
+            let body = page(vec![issue("1", "ABC-2", "new")], None);
+            (
+                200,
+                json!({ "jsonrpc": "2.0", "id": request["id"],
+                        "result": { "content": [{ "type": "text", "text": "a page" }],
+                                    "structuredContent": body } }),
+            )
+        }),
+    )
+    .await;
+    let (_, issues) = fetch(&node(&socket, Some("client-x")), &site(), None)
+        .await
+        .unwrap();
+    assert_eq!(issues.len(), 1);
+    assert_eq!(
+        seen.requests()[0].1["params"]["arguments"],
+        json!({ "jql": JQL, "page": true, "profile": "client-x" })
+    );
+}
+
+#[tokio::test]
+async fn node_refusals_and_failures_are_reported() {
+    let cases: Vec<(Value, u16, &str, &str)> = vec![
+        (
+            json!({ "code": -32003, "data": { "decision": "asked" },
+                    "message": "jira-review__search would be put to the operator, and a call from plugin workboard is never held: add allow = [\"search\"]" }),
+            200,
+            "jira_refused",
+            "allow = [\"search\"]",
+        ),
+        (
+            json!({ "code": -32003, "message": "plugin jira-review is not offered on channel work" }),
+            200,
+            "jira_refused",
+            "not offered",
+        ),
+        (
+            json!({ "code": -32602, "message": "plugin jira-review is not installed on this node" }),
+            200,
+            "jira_review_missing",
+            "tracon plugin add cosmicspork/jira-review",
+        ),
+        (
+            json!({ "code": -32601, "message": "tools/call is not in workboard's node_methods" }),
+            200,
+            "tracon_unsupported",
+            "node_methods",
+        ),
+        (
+            json!({ "code": -32000, "data": { "tool_error": true },
+                    "message": "plugin jira-review reports an error from search: credential jira was not lent to this call" }),
+            200,
+            "jira_unavailable",
+            "was not lent",
+        ),
+        (
+            json!({ "code": -32001, "message": "wrong token" }),
+            401,
+            "tracon_forbidden",
+            "token",
+        ),
+    ];
+    for (rpc_error, status, code, says) in cases {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("node.sock");
+        let answer = rpc_error.clone();
+        fake_node(
+            &socket,
+            reply(move |request| {
+                (
+                    status,
+                    json!({ "jsonrpc": "2.0", "id": request["id"], "error": answer }),
+                )
+            }),
+        )
+        .await;
+        let err = fetch(&node(&socket, None), &site(), None)
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, code, "{rpc_error}");
+        assert!(err.message.contains(says), "{rpc_error}: {}", err.message);
+    }
+
+    // jira-review's own error result.
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("node.sock");
+    fake_node(
+        &socket,
+        reply(|request| {
+            (
+                200,
+                json!({ "jsonrpc": "2.0", "id": request["id"],
+                        "result": { "content": [{ "type": "text", "text": "Jira said 401" }],
+                                    "isError": true } }),
+            )
+        }),
+    )
+    .await;
+    let err = fetch(&node(&socket, None), &site(), None)
         .await
         .unwrap_err();
-    assert_eq!(err.code, "jira_identity_changed");
-    assert_eq!(seen.0.lock().unwrap().len(), 1);
-    let other_site = Url::parse("https://other.atlassian.net").unwrap();
-    let err = fetch(&tracon, "work", &other_site, None).await.unwrap_err();
-    assert_eq!(err.code, "jira_identity_changed");
-}
+    assert_eq!(err.code, "jira_unavailable");
+    assert!(err.message.contains("Jira said 401"), "{}", err.message);
 
-#[tokio::test]
-async fn older_tracon_serving_its_web_page_is_unsupported() {
-    let (tracon, _) = serve(|_| {
-        (
-            [(header::CONTENT_TYPE, "text/html")],
-            "<!doctype html><div id=app></div>",
-        )
-            .into_response()
-    })
-    .await;
-    let err = fetch(&tracon, "work", &site(), None).await.unwrap_err();
+    // No socket answering, and no socket given.
+    let gone = dir.path().join("gone.sock");
+    let err = fetch(&node(&gone, None), &site(), None).await.unwrap_err();
+    assert_eq!(err.code, "tracon_unavailable");
+    let none = Source::Node {
+        socket: None,
+        token: "t".into(),
+        profile: None,
+    };
+    let err = fetch(&none, &site(), None).await.unwrap_err();
     assert_eq!(err.code, "tracon_unsupported");
 }
 
 #[tokio::test]
-async fn tracon_refusals_and_absence_are_reported() {
-    let (tracon, _) = serve(|_| {
-        (
-            StatusCode::UNPROCESSABLE_ENTITY,
-            Json(json!({"error": {"code": 422, "message": "credential jira is not bound to channel work"}})),
-        )
-            .into_response()
-    })
+async fn bound_identity_change_stops_after_the_first_page() {
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("node.sock");
+    let seen = fake_node(
+        &socket,
+        reply(|request| {
+            let body = page(vec![issue("1", "ABC-2", "new")], Some("more"));
+            (200, page_answer(&request["id"], &body))
+        }),
+    )
     .await;
-    let err = fetch(&tracon, "work", &site(), None).await.unwrap_err();
-    assert_eq!(err.code, "jira_unavailable");
-    assert!(err.message.contains("not bound to channel work"));
-
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let closed = Url::parse(&format!("http://{}/", listener.local_addr().unwrap())).unwrap();
-    drop(listener);
-    let err = fetch(&closed, "work", &site(), None).await.unwrap_err();
-    assert_eq!(err.code, "tracon_unavailable");
+    let err = fetch(
+        &node(&socket, None),
+        &site(),
+        Some((SITE, "other@example.com")),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err.code, "jira_identity_changed");
+    assert_eq!(seen.requests().len(), 1);
+    let other_site = Url::parse("https://other.atlassian.net").unwrap();
+    let err = fetch(&node(&socket, None), &other_site, None)
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, "jira_identity_changed");
 }
 
 #[tokio::test]
-async fn repeating_cursor_and_duplicate_issues_are_rejected() {
-    let (tracon, _) =
-        serve(|_| Json(page(vec![issue("1", "ABC-2", "new")], Some("same"))).into_response()).await;
-    let err = fetch(&tracon, "work", &site(), None).await.unwrap_err();
+async fn repeating_cursor_and_unreadable_pages_are_rejected() {
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("node.sock");
+    fake_node(
+        &socket,
+        reply(|request| {
+            let body = page(vec![issue("1", "ABC-2", "new")], Some("same"));
+            (200, page_answer(&request["id"], &body))
+        }),
+    )
+    .await;
+    let err = fetch(&node(&socket, None), &site(), None)
+        .await
+        .unwrap_err();
     assert_eq!(err.code, "jira_invalid_response");
+
+    let socket = dir.path().join("text.sock");
+    fake_node(
+        &socket,
+        reply(|request| {
+            (
+                200,
+                json!({ "jsonrpc": "2.0", "id": request["id"],
+                        "result": { "content": [{ "type": "text", "text": "not a page" }] } }),
+            )
+        }),
+    )
+    .await;
+    let err = fetch(&node(&socket, None), &site(), None)
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, "jira_invalid_response");
+}
+
+#[tokio::test]
+async fn a_child_is_started_as_mcp_and_paged_over_stdio() {
+    let dir = tempfile::tempdir().unwrap();
+    let (program, log) = fake_jira_review(dir.path(), "pages");
+    let source = Source::Child {
+        program: program.clone(),
+        profile: None,
+    };
+    let (identity, issues) = fetch(&source, &site(), None).await.unwrap();
+    assert_eq!(identity.account_email, "user@example.com");
+    assert_eq!(issues.len(), 2);
+    let log = logged(&log);
+    assert_eq!(log[0]["argv"], json!(["mcp"]));
+    assert_eq!(log[1]["method"], "initialize");
+    assert_eq!(log[1]["params"]["protocolVersion"], "2025-06-18");
+    assert_eq!(log[2]["method"], "notifications/initialized");
+    assert!(log[2].get("id").is_none());
+    let calls: Vec<&Value> = log.iter().filter(|m| m["method"] == "tools/call").collect();
+    assert_eq!(calls.len(), 2);
+    for call in &calls {
+        assert_eq!(call["params"]["name"], "search");
+    }
+    // No profile argument: standalone, the profile is a flag.
+    assert_eq!(
+        calls[0]["params"]["arguments"],
+        json!({ "jql": JQL, "page": true })
+    );
+    assert_eq!(
+        calls[1]["params"]["arguments"],
+        json!({ "jql": JQL, "page": true, "cursor": "next-page" })
+    );
+
+    let dir = tempfile::tempdir().unwrap();
+    let (program, log) = fake_jira_review(dir.path(), "pages");
+    let source = Source::Child {
+        program,
+        profile: Some("client-x".into()),
+    };
+    fetch(&source, &site(), None).await.unwrap();
+    assert_eq!(
+        logged(&log)[0]["argv"],
+        json!(["--profile", "client-x", "mcp"])
+    );
+}
+
+#[tokio::test]
+async fn a_child_that_fails_says_why() {
+    let dir = tempfile::tempdir().unwrap();
+    let (program, _) = fake_jira_review(dir.path(), "tool_error");
+    let source = Source::Child {
+        program,
+        profile: None,
+    };
+    let err = fetch(&source, &site(), None).await.unwrap_err();
+    assert_eq!(err.code, "jira_unavailable");
+    assert!(
+        err.message.contains("no Jira credential"),
+        "{}",
+        err.message
+    );
+
+    let (program, _) = fake_jira_review(dir.path(), "exit");
+    let source = Source::Child {
+        program,
+        profile: None,
+    };
+    let err = fetch(&source, &site(), None).await.unwrap_err();
+    assert_eq!(err.code, "jira_unavailable");
+    assert!(err.message.contains("--bogus"), "{}", err.message);
+
+    let source = Source::Child {
+        program: dir.path().join("no-such-jira-review"),
+        profile: None,
+    };
+    let err = fetch(&source, &site(), None).await.unwrap_err();
+    assert_eq!(err.code, "jira_review_missing");
+    assert!(err.message.contains("--jira-review"), "{}", err.message);
 }
 
 #[test]

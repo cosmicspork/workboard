@@ -3,6 +3,9 @@ version = "0.3.0"
 contract = 1
 # The node appends --socket <path> --data <dir>, which starts plugin mode.
 exec = ["bin/workboard", "serve"]
+# A Jira refresh calls jira-review__search through the node as this plugin.
+# Naming a node method also makes the node append --node-socket <path>.
+node_methods = ["tools/call"]
 
 # The node serves ui/ (the built SPA) itself and forwards the SPA's api/...
 # requests to this plugin as the operator.

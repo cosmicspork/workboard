@@ -1,3 +1,5 @@
+mod support;
+
 use std::sync::{Arc, atomic::AtomicBool};
 
 use tokio::{
@@ -53,12 +55,14 @@ async fn localhost_and_ipv4_are_independent_same_origin_hosts() {
     let app = App {
         store,
         site: JiraSite::Configured(site),
-        tracon: Url::parse("http://127.0.0.1:9").unwrap(),
+        jira: workboard::jira::Source::Child {
+            program: dir.path().join("no-jira-review"),
+            profile: None,
+        },
         refresh_in_progress: Arc::new(AtomicBool::new(false)),
     };
     let local = Local {
         origin: format!("http://127.0.0.1:{port}"),
-        jira_channel: "work".into(),
     };
     let server = tokio::spawn(async move {
         axum::serve(listener, http::router(app, local))
@@ -214,4 +218,62 @@ async fn localhost_and_ipv4_are_independent_same_origin_hosts() {
     let (_, board) = request(port, "GET", &localhost, None, "/api/board", "").await;
     assert_eq!(board["projects"][0]["name"], "Kubernetes");
     server.abort();
+}
+
+/// `workboard serve` as a person runs it: a refresh starts the named
+/// jira-review as `mcp` with the profile, and no Tracon is involved.
+#[tokio::test]
+async fn standalone_refresh_runs_jira_review_with_the_profile() {
+    use tokio::io::AsyncBufReadExt;
+    let dir = tempfile::tempdir().unwrap();
+    let (program, log) = support::fake_jira_review(dir.path(), "pages");
+    let mut child = tokio::process::Command::new(support::BIN)
+        .arg("--data-dir")
+        .arg(dir.path().join("data"))
+        .args(["serve", "--port", "0", "--jira-site", support::SITE])
+        .arg("--jira-review")
+        .arg(&program)
+        .args(["--jira-profile", "client-x"])
+        .stdout(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let mut lines = tokio::io::BufReader::new(child.stdout.take().unwrap()).lines();
+    let first = lines.next_line().await.unwrap().unwrap();
+    let port: u16 = first.rsplit(':').next().unwrap().parse().unwrap();
+    let host = format!("127.0.0.1:{port}");
+    let origin = format!("http://{host}");
+    let (status, sync) = request(
+        port,
+        "POST",
+        &host,
+        Some(&origin),
+        "/api/jira/refresh",
+        "{}",
+    )
+    .await;
+    assert_eq!(status, 200, "{sync}");
+    assert_eq!(sync["issue_count"], 2);
+    assert_eq!(
+        support::logged(&log)[0]["argv"],
+        serde_json::json!(["--profile", "client-x", "mcp"])
+    );
+}
+
+#[tokio::test]
+async fn the_old_jira_channel_flag_is_gone_and_options_are_checked() {
+    for args in [
+        &["serve", "--jira-channel", "work"][..],
+        &["serve", "--tracon-url", "http://127.0.0.1:7420"],
+        &["serve", "--jira-profile", "two words"],
+    ] {
+        let out = tokio::process::Command::new(support::BIN)
+            .args(["--jira-site", support::SITE])
+            .args(args)
+            .env("WORKBOARD_DATA_DIR", tempfile::tempdir().unwrap().path())
+            .output()
+            .await
+            .unwrap();
+        assert!(!out.status.success(), "{args:?}");
+    }
 }

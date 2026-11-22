@@ -4,20 +4,23 @@ A local morning board for personal commitments, with an explicitly refreshed, re
 
 ## Install and launch
 
-Requires Rust/Cargo and Bun for building. Jira refresh goes through a local [Tracon](https://github.com/cosmicspork/tracon) node, which holds the Jira credential; Workboard never sees it:
+Requires Rust/Cargo and Bun for building. Jira refresh runs [jira-review](https://github.com/cosmicspork/jira-review), which holds the Jira credential; Workboard never sees it:
 
 ```sh
 bun install --cwd spa
 bun run --cwd spa build
 cargo install --path . --locked
+jira-review login                # once: store the Jira credential in the keyring
 workboard serve --port 4510 --jira-site https://your-site.atlassian.net
 ```
+
+Each refresh starts `jira-review [--profile P] mcp` as a child, pages its `search` tool over stdin and stdout, and stops it; nothing else talks to Jira and no Tracon node is needed. jira-review finds its own credential: its environment (Workboard's, which the child inherits), a `.env` in the directory Workboard was started from, or the keyring entry for the profile (`default` unless `--jira-profile`, or jira-review's own `JIRA_REVIEW_PROFILE`, says otherwise). A refresh gives up after two minutes, and a missing program is reported as such.
 
 Open `http://localhost:4510/` (or `http://127.0.0.1:4510/`). The server runs only while this command is running; it does not install a login item or background service. Build the frontend before compiling Rust: assets are embedded in the executable and a missing `spa/dist` fails compilation.
 
 The database is `$HOME/.local/share/workboard/workboard.sqlite3` by default. `--data-dir PATH` overrides `WORKBOARD_DATA_DIR`; both replace the default directory. The directory and database are private (0700/0600). Back up the database and its WAL sidecars together when the server is stopped. Migrations are versioned; a database from a newer application version is rejected instead of recreated.
 
-Options: `--port` changes the loopback port (default 4510), `--tracon-url` chooses the Tracon node (default `http://127.0.0.1:7420`; it must be a loopback `http://` origin), `--jira-channel` chooses the Tracon channel whose Jira credential is used (default `work`), and `--jira-site` (or `WORKBOARD_JIRA_SITE`) sets your HTTPS Jira origin, such as `https://example.atlassian.net`; it has no default. Bind remains `127.0.0.1`; both `localhost` and `127.0.0.1` work in the browser. Each mutation must send an Origin matching its own Host, and other hosts are rejected. Use a different port if 4510 is occupied.
+Options: `--port` changes the loopback port (default 4510), `--jira-site` (or `WORKBOARD_JIRA_SITE`) sets your HTTPS Jira origin, such as `https://example.atlassian.net` (it has no default), `--jira-review` (or `WORKBOARD_JIRA_REVIEW`) names the jira-review program (default `jira-review` on `PATH`), and `--jira-profile` (or `WORKBOARD_JIRA_PROFILE`) names the jira-review profile to read Jira with. Bind remains `127.0.0.1`; both `localhost` and `127.0.0.1` work in the browser. Each mutation must send an Origin matching its own Host, and other hosts are rejected. Use a different port if 4510 is occupied.
 
 The sidebar mark and favicon share `spa/public/workboard.svg`. `bun run --cwd spa icons` regenerates 16px/32px PNGs, a two-size `.ico`, and a 180px Apple touch icon from it. The SPA build runs this generator automatically; rebuild and reinstall the Rust executable after changing the SVG because assets are embedded.
 
@@ -29,16 +32,22 @@ Workboard also ships as a [Tracon](https://github.com/cosmicspork/tracon) plugin
 tracon plugin add cosmicspork/workboard
 ```
 
-The board then appears in Tracon's **Plugins** section, one instance per channel. The node starts `workboard serve --socket <path> --data <dir>`, serves the SPA from the release archive's `ui/` itself, and forwards the SPA's API requests to Workboard as the operator, each carrying a context the node signs. Workboard answers only those requests on `/api` (any other is refused with 401), and offers the board's operations as tools (see [Agent tools](#agent-tools)).
+The board then appears in Tracon's **Plugins** section, one instance per channel. The node starts `workboard serve --socket <path> --data <dir> --node-socket <path>`, serves the SPA from the release archive's `ui/` itself, and forwards the SPA's API requests to Workboard as the operator, each carrying a context the node signs. Workboard answers only those requests on `/api` (any other is refused with 401), and offers the board's operations as tools (see [Agent tools](#agent-tools)).
 
 Configure an instance in `<data>/plugin.toml`; the node gives plugins no other way:
 
 ```toml
 jira_site = "https://your-site.atlassian.net"   # needed for Refresh Jira and browse links
-tracon_url = "http://127.0.0.1:7420"            # optional; the node's loopback origin
+jira_profile = "work"                           # optional; which Jira binding a refresh is lent
 ```
 
-Without `jira_site` the board works, Jira keys show without links, and **Refresh Jira** says which file to edit. Restart the plugin after changing the file. A refresh uses the Jira credential of the channel the board was opened on (there is no `--jira-channel` in plugin mode).
+Without `jira_site` the board works, Jira keys show without links, and **Refresh Jira** says which file to edit. Restart the plugin after changing the file. (`tracon_url`, which 0.3 read, is no longer used and is ignored.)
+
+A refresh calls the [jira-review](https://github.com/cosmicspork/jira-review) plugin's `search` through the node, as Workboard: the manifest names the node method `tools/call`, and the node hands Workboard a socket for it (`--node-socket`). So jira-review must be installed on the node (`tracon plugin add cosmicspork/jira-review`), and the call runs on the instance's own channel with that channel's Jira credential:
+
+- Without `jira_profile`, the call carries no `profile` and is lent the channel's `jira` binding. With `jira_profile = "P"` it passes `profile: "P"` and is lent `jira-P` instead, which the channel must bind.
+- The node decides the call by its signed policy and jira-review's `[[plugin]]` entry, like any call, but a call from a plugin is never held for a card: one that would be asked is refused. The shipped working agreements (bundle v26) allow `jira-review__search` by name, so it runs with no configuration. On a node whose bundle does not, add `allow = ["search"]` to the `[[plugin]]` entry for `jira-review` in `node.toml`.
+- A refusal or failure leaves the board as it was, shows the reason's kind on the page, and logs the node's full answer to the plugin log (`tracon plugin logs workboard`). The node logs the call on the channel under `plugin:workboard`.
 
 To move an existing standalone board into an instance, stop both, then copy `~/.local/share/workboard/workboard.sqlite3` and any `-wal`/`-shm` sidecars into the instance's `<data>` directory under the same names. Keep the files private (0600).
 
@@ -64,7 +73,7 @@ An agent reads and changes the board through the same operations as the page, as
 
 A tool's arguments are the route's path parameters plus its JSON body (or its query string, for a `GET`): `PUT /api/tasks/{id}` with `{"version": 3, ...}` is `task_update` with `{"id": "...", "version": 3, ...}`. Two things are on one side only, on purpose (`ops::HTTP_ONLY`, `ops::TOOL_ONLY`):
 
-- `POST /api/jira/refresh` is not a tool. A refresh reads Jira through the node's operator route, so an agent's call would reach Jira as the operator. An agent that wants fresh Jira facts calls jira-review's `search` under its own policy.
+- `POST /api/jira/refresh` is not a tool. A refresh reads Jira as Workboard itself: under Tracon it calls jira-review's `search` as this plugin, a call the node never holds for a card, and standalone it runs jira-review with your own credential. A refresh as a tool would let an agent borrow that access. An agent that wants fresh Jira facts calls jira-review's `search` under its own policy.
 - `proposal_status` is a tool of the standalone `mcp` mode only, for hearing what the person decided in `workboard review`.
 
 Under Tracon (`serve --socket`), the tools are `workboard__board` and so on:
@@ -94,7 +103,7 @@ The agent hears the decision with `proposal_status`. `workboard op` lists the op
 - Mark a Next task **Today** to focus on it in Morning. Today persists overnight. Waiting/Later tasks with review dates on or before the server's local date appear in **Review due**; snoozing changes only the review date. Done tasks can be reopened explicitly.
 - Edit the personal title to override an imported Jira summary; clear it to follow the source title again. Links are displayed as text and open in a separate tab without background fetching. Add Jira, MR, Tracon, or communications links manually as needed.
 
-Refresh pages through Tracon's `GET /api/jira/search`, which Tracon serves to loopback callers without a token. The Jira site and account Tracon reports are bound at the first successful refresh. A changed identity, a stopped or older Tracon node, a missing channel credential, a timeout, or a malformed response leaves prior snapshots and decisions intact and displays a recovery message. Configure the Jira credential in Tracon, not here. No background Jira polling occurs.
+Refresh pages through jira-review's `search` (`page: true`, following `next_cursor`): through the node under Tracon, or a `jira-review mcp` child standalone (see above). The Jira site and account jira-review reports are bound at the first successful refresh. A changed identity, a missing jira-review, a refusal by Tracon's policy, a missing credential, a timeout, or a malformed response leaves prior snapshots and decisions intact and displays a recovery message. Configure the Jira credential in jira-review or Tracon, not here. No background Jira polling occurs.
 
 ## License
 
@@ -109,6 +118,8 @@ cargo test --locked
 bun run --cwd spa check
 bun test --cwd spa
 ```
+
+The Jira tests drive a Python stand-in for `jira-review mcp` (`tests/support/fake_jira_review.py`), so `cargo test` needs `python3` on `PATH`, and a fake node socket for plugin mode.
 
 The API is single-user and local-only: JSON under `/api`, one route per operation in `src/ops.rs` (add an operation there, not a route in `src/http.rs`), optimistic task versions for edits, `GET /api/tasks/{id}` to read one task by the Workboard ID shown in its editor, 64 KiB request cap, same-origin mutation protection (in plugin mode, the node's signed caller context instead), and no login or CORS surface. The SPA uses only relative URLs, since Tracon serves it under a path prefix. Frontend list selection, grouping, and filtering live in `spa/src/lib/views.ts`; transactional persistence, project resolution, and snapshot reconciliation live in `src/store.rs`.
 
