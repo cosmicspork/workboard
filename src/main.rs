@@ -8,9 +8,9 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use serde_json::{Value, json};
 use workboard::{
-    config::{self, site, tracon},
+    config::{self, site},
     http::{self, App, JiraSite, Local},
-    mcp, ops, plugin,
+    jira, mcp, ops, plugin,
     proposals::{Outcome, Proposals, Status},
     stdio,
     store::Store,
@@ -21,10 +21,6 @@ use workboard::{
 struct Cli {
     #[arg(long, global = true, env = "WORKBOARD_DATA_DIR")]
     data_dir: Option<PathBuf>,
-    #[arg(long, global = true, default_value = config::DEFAULT_TRACON_URL)]
-    tracon_url: String,
-    #[arg(long, global = true, default_value = "work")]
-    jira_channel: String,
     #[arg(long, global = true, env = "WORKBOARD_JIRA_SITE")]
     jira_site: Option<String>,
     #[command(subcommand)]
@@ -45,6 +41,22 @@ enum Command {
         /// Plugin mode: this instance's data directory.
         #[arg(long, requires = "socket")]
         data: Option<PathBuf>,
+        /// Plugin mode: the node's socket for calling it back, where a refresh
+        /// calls jira-review's `search`.
+        #[arg(long, requires = "socket")]
+        node_socket: Option<PathBuf>,
+        /// The jira-review profile a refresh reads Jira with: its keyring
+        /// entry. Unset, jira-review uses its own default.
+        #[arg(long, env = "WORKBOARD_JIRA_PROFILE", conflicts_with = "socket")]
+        jira_profile: Option<String>,
+        /// The jira-review program a refresh starts as `jira-review mcp`.
+        #[arg(
+            long,
+            env = "WORKBOARD_JIRA_REVIEW",
+            default_value = "jira-review",
+            conflicts_with = "socket"
+        )]
+        jira_review: PathBuf,
     },
     /// An MCP server on stdin and stdout with the board's tools, for any agent
     /// client. Reads answer; writes wait as proposals for `workboard review`.
@@ -86,10 +98,11 @@ async fn main() -> Result<()> {
     if let Command::Serve {
         socket: Some(socket),
         data: Some(data),
+        node_socket,
         ..
     } = &cli.command
     {
-        return plugin::run(socket, data).await;
+        return plugin::run(socket, data, node_socket.as_deref()).await;
     }
     let data_dir = match cli.data_dir.clone() {
         Some(dir) => dir,
@@ -141,12 +154,21 @@ async fn main() -> Result<()> {
         Command::Serve { .. } => {}
     }
     let jira_site = optional_site.context("--jira-site or WORKBOARD_JIRA_SITE is required")?;
-    let tracon_url = tracon(&cli.tracon_url)?;
-    if cli.jira_channel.trim().is_empty() {
-        bail!("Jira channel must not be empty");
-    }
     match cli.command {
-        Command::Serve { port, .. } => {
+        Command::Serve {
+            port,
+            jira_profile,
+            jira_review,
+            ..
+        } => {
+            let profile = jira_profile
+                .as_deref()
+                .map(config::profile)
+                .transpose()
+                .context("--jira-profile")?;
+            if jira_review.as_os_str().is_empty() {
+                bail!("--jira-review must name a program");
+            }
             let store = Arc::new(Store::init(&data_dir, &jira_site)?);
             let address = SocketAddrV4::new(Ipv4Addr::LOCALHOST, port);
             let listener = tokio::net::TcpListener::bind(address)
@@ -156,13 +178,13 @@ async fn main() -> Result<()> {
             let app = App {
                 store,
                 site: JiraSite::Configured(jira_site),
-                tracon: tracon_url,
+                jira: jira::Source::Child {
+                    program: jira_review,
+                    profile,
+                },
                 refresh_in_progress: Arc::new(AtomicBool::new(false)),
             };
-            let local = Local {
-                origin,
-                jira_channel: cli.jira_channel,
-            };
+            let local = Local { origin };
             println!(
                 "Workboard: http://localhost:{}",
                 listener.local_addr()?.port()

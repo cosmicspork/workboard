@@ -116,13 +116,15 @@ export const api = {
 
 export function refreshErrorText(code: string | null): string {
   switch (code) {
-    case 'tracon_unavailable': return 'Tracon is not running, so Jira could not be refreshed. Start the Tracon node, then refresh again.';
-    case 'tracon_unsupported': return 'This Tracon node does not offer Jira search yet. Update Tracon, then refresh again.';
-    case 'tracon_forbidden': return 'Tracon refused the request. Run Workboard on the same machine as the Tracon node.';
-    case 'jira_identity_changed': return "Tracon's Jira account or site differs from the one this board is bound to. Your previous snapshot is unchanged.";
+    case 'tracon_unavailable': return 'Tracon did not answer the Jira refresh. Restart Workboard in Tracon, then refresh again.';
+    case 'tracon_unsupported': return 'This Tracon node does not let Workboard call jira-review. Update Tracon, then restart Workboard in Tracon.';
+    case 'tracon_forbidden': return 'Tracon refused Workboard\'s call. Restart Workboard in Tracon, then refresh again.';
+    case 'jira_refused': return 'Tracon did not let Workboard run jira-review\'s search: its policy or the [[plugin]] entry for jira-review refused it, or this channel binds no Jira credential. The plugin log says which. Your previous snapshot remains available.';
+    case 'jira_review_missing': return 'jira-review is not installed. Under Tracon, add the jira-review plugin; standalone, put jira-review on PATH or name it with --jira-review. Then refresh again.';
+    case 'jira_identity_changed': return "jira-review's Jira account or site differs from the one this board is bound to. Your previous snapshot is unchanged.";
     case 'jira_timeout': return 'Jira refresh timed out. Your previous snapshot is still available; try again later.';
     case 'jira_invalid_response': return 'Jira returned data Workboard could not safely use. Your previous snapshot is unchanged.';
-    case 'jira_unavailable': return 'Jira search through Tracon failed. Check the work channel Jira credential in Tracon; your previous snapshot remains available.';
+    case 'jira_unavailable': return 'jira-review could not search Jira. Check its Jira credential (under Tracon, the channel\'s jira binding; standalone, jira-review\'s own configuration). Your previous snapshot remains available.';
     default: return 'The latest Jira refresh failed. Your previous snapshot remains available.';
   }
 }

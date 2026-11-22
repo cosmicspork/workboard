@@ -11,9 +11,7 @@ use std::sync::{
 use axum::{
     Json, Router,
     body::Bytes,
-    extract::{
-        DefaultBodyLimit, Extension, Path, RawQuery, Request, State, rejection::BytesRejection,
-    },
+    extract::{DefaultBodyLimit, Path, RawQuery, Request, State, rejection::BytesRejection},
     http::{HeaderValue, Method, StatusCode, Uri, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
@@ -33,11 +31,12 @@ use crate::{
 pub struct App {
     pub store: Arc<Store>,
     pub site: JiraSite,
-    pub tracon: Url,
+    /// Where a refresh asks jira-review's `search`.
+    pub jira: jira::Source,
     pub refresh_in_progress: Arc<AtomicBool>,
 }
 
-/// The Jira site a refresh checks Tracon's answer against.
+/// The Jira site a refresh checks jira-review's answer against.
 #[derive(Clone, Debug)]
 pub enum JiraSite {
     Configured(Url),
@@ -47,18 +46,11 @@ pub enum JiraSite {
     },
 }
 
-/// The Tracon channel whose Jira credential a refresh uses. The standalone
-/// guard sets it from `--jira-channel`; in plugin mode it is the channel of the
-/// request's verified caller context.
-#[derive(Clone, Debug)]
-pub struct JiraChannel(pub String);
-
 /// What the standalone server checks requests against.
 #[derive(Clone)]
 pub struct Local {
     /// `http://127.0.0.1:<port>`.
     pub origin: String,
-    pub jira_channel: String,
 }
 
 #[derive(Embed)]
@@ -93,7 +85,7 @@ fn store_error(err: StoreError) -> Response {
         StoreError::IdentityChanged => error(
             StatusCode::BAD_GATEWAY,
             "jira_identity_changed",
-            "Tracon's Jira account or site changed from the one this board is bound to.",
+            "jira-review's Jira account or site changed from the one this board is bound to.",
         ),
         StoreError::Internal(_) => internal(),
     }
@@ -218,7 +210,6 @@ impl Drop for RefreshGuard {
 
 async fn refresh(
     State(app): State<App>,
-    Extension(JiraChannel(channel)): Extension<JiraChannel>,
     bytes: Result<Bytes, BytesRejection>,
 ) -> ApiResult<crate::model::Sync> {
     let bytes = body(bytes)?;
@@ -253,10 +244,9 @@ async fn refresh(
         .await?
         .map_err(|_| internal())?;
     let bound = sync.site.as_deref().zip(sync.account_email.as_deref());
-    // This reads the node's loopback `GET /api/jira/search`. In plugin mode it should
-    // become a call to jira-review's `search` tool through the node's plugin-to-node
-    // socket once Tracon offers one (plugins U10).
-    let outcome = jira::fetch(&app.tracon, &channel, &site, bound).await;
+    // Plugin mode: jira-review's `search` through the node's `tools/call`, as
+    // this plugin. Standalone: a `jira-review mcp` child (see `jira`).
+    let outcome = jira::fetch(&app.jira, &site, bound).await;
     let now = chrono::Utc::now().to_rfc3339();
     match outcome {
         Ok((identity, issues)) => {
@@ -277,6 +267,8 @@ async fn refresh(
         }
         Err(err) => {
             let code = err.code;
+            // The board keeps only the code; the plugin log keeps why.
+            eprintln!("workboard: Jira refresh failed ({code}): {}", err.message);
             let store = app.store.clone();
             blocking(move || store.record_failure(&now, code))
                 .await?
@@ -326,7 +318,7 @@ async fn fallback(uri: Uri) -> Response {
     }
 }
 
-async fn guard(State(local): State<Arc<Local>>, mut request: Request, next: Next) -> Response {
+async fn guard(State(local): State<Arc<Local>>, request: Request, next: Next) -> Response {
     let is_api = request.uri().path().starts_with("/api");
     let ipv4_host = local.origin.strip_prefix("http://").unwrap_or("");
     let port = ipv4_host.strip_prefix("127.0.0.1:").unwrap_or("");
@@ -369,9 +361,6 @@ async fn guard(State(local): State<Arc<Local>>, mut request: Request, next: Next
             "JSON Content-Type is required.",
         )
     } else {
-        request
-            .extensions_mut()
-            .insert(JiraChannel(local.jira_channel.clone()));
         next.run(request).await
     };
     let headers = response.headers_mut();

@@ -4,9 +4,8 @@
 
 mod support;
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use axum::{Json, Router, extract::Query, routing::get};
 use serde_json::{Value, json};
 use support::{Plugin, http, key, unsigned};
 use workboard::contract::{self, sign};
@@ -166,62 +165,80 @@ async fn refresh_without_a_jira_site_names_plugin_toml() {
     assert_eq!(board["sync"]["error_code"], Value::Null);
 }
 
-/// A stand-in for the node's loopback `GET /api/jira/search`, recording the
-/// channel each page was asked for.
-async fn fake_tracon(channels: Arc<Mutex<Vec<String>>>) -> u16 {
-    let app = Router::new().route(
-        "/api/jira/search",
-        get(
-            move |Query(q): Query<std::collections::HashMap<String, String>>| {
-                let channels = channels.clone();
-                async move {
-                    channels
-                        .lock()
-                        .unwrap()
-                        .push(q.get("channel").cloned().unwrap_or_default());
-                    Json(json!({
-                        "site": "https://example.atlassian.net",
-                        "account_email": "me@example.com",
-                        "next_cursor": null,
-                        "issues": [{
-                            "id": "10001", "key": "APP-1", "summary": "Imported",
-                            "status": "To Do", "status_category": "new",
-                        }],
-                    }))
-                }
-            },
-        ),
-    );
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
-        .await
-        .unwrap();
-    let port = listener.local_addr().unwrap().port();
-    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    port
-}
-
 #[tokio::test]
-async fn refresh_uses_the_channel_of_the_verified_context() {
-    let channels = Arc::new(Mutex::new(Vec::new()));
-    let port = fake_tracon(channels.clone()).await;
+async fn refresh_calls_jira_review_through_the_node_socket() {
     let dir = tempfile::tempdir().unwrap();
-    let config = format!(
-        "jira_site = \"https://example.atlassian.net\"\ntracon_url = \"http://127.0.0.1:{port}\"\n"
-    );
-    let plugin = Plugin::start(dir.path(), Some(&config)).await;
-    let mut ctx = unsigned("POST", "/api/jira/refresh", b"{}");
-    ctx["channel"] = json!("client-x");
-    let (status, sync) = plugin
-        .api_with("POST", "/api/jira/refresh", "{}", &sign(&ctx, &key()))
-        .await;
+    let node_socket = dir.path().join("node.sock");
+    let seen = support::fake_node(&node_socket, support::two_pages()).await;
+    let config = "jira_site = \"https://example.atlassian.net\"\n";
+    let plugin = Plugin::start_with_node(dir.path(), Some(config), &node_socket).await;
+    let (status, sync) = plugin.api("POST", "/api/jira/refresh", "{}").await;
     assert_eq!(status, 200, "{sync}");
-    assert_eq!(sync["issue_count"], 1);
-    assert_eq!(*channels.lock().unwrap(), ["client-x"]);
+    assert_eq!(sync["issue_count"], 2);
+    let requests = seen.requests();
+    assert_eq!(requests.len(), 2);
+    for (bearer, request) in &requests {
+        // The token the node started the plugin with.
+        assert_eq!(bearer.as_deref(), Some(support::TOKEN));
+        assert_eq!(request["method"], "tools/call");
+        assert_eq!(request["params"]["name"], "jira-review__search");
+        // No profile configured: the node lends the bare `jira` binding.
+        assert!(request["params"]["arguments"].get("profile").is_none());
+    }
     let (_, board) = plugin.api("GET", "/api/board", "").await;
     assert_eq!(
         board["tasks"][0]["jira"]["url"],
-        "https://example.atlassian.net/browse/APP-1"
+        "https://example.atlassian.net/browse/ABC-2"
     );
+}
+
+#[tokio::test]
+async fn refresh_passes_the_configured_profile() {
+    let dir = tempfile::tempdir().unwrap();
+    let node_socket = dir.path().join("node.sock");
+    let seen = support::fake_node(&node_socket, support::two_pages()).await;
+    let config = "jira_site = \"https://example.atlassian.net\"\njira_profile = \"client-x\"\n";
+    let plugin = Plugin::start_with_node(dir.path(), Some(config), &node_socket).await;
+    let (status, sync) = plugin.api("POST", "/api/jira/refresh", "{}").await;
+    assert_eq!(status, 200, "{sync}");
+    for (_, request) in seen.requests() {
+        assert_eq!(request["params"]["arguments"]["profile"], "client-x");
+    }
+}
+
+#[tokio::test]
+async fn a_refused_refresh_keeps_the_board_and_records_the_code() {
+    let dir = tempfile::tempdir().unwrap();
+    let node_socket = dir.path().join("node.sock");
+    support::fake_node(
+        &node_socket,
+        Arc::new(|request: &Value| {
+            (
+                200,
+                json!({ "jsonrpc": "2.0", "id": request["id"],
+                        "error": { "code": -32003, "data": { "decision": "asked" },
+                                   "message": "jira-review__search would be put to the operator" } }),
+            )
+        }),
+    )
+    .await;
+    let config = "jira_site = \"https://example.atlassian.net\"\n";
+    let plugin = Plugin::start_with_node(dir.path(), Some(config), &node_socket).await;
+    let (status, answer) = plugin.api("POST", "/api/jira/refresh", "{}").await;
+    assert_eq!(status, 502, "{answer}");
+    assert_eq!(answer["error"], "jira_refused");
+    let (_, board) = plugin.api("GET", "/api/board", "").await;
+    assert_eq!(board["sync"]["error_code"], "jira_refused");
+}
+
+#[tokio::test]
+async fn without_a_node_socket_refresh_says_so() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = "jira_site = \"https://example.atlassian.net\"\n";
+    let plugin = Plugin::start(dir.path(), Some(config)).await;
+    let (status, answer) = plugin.api("POST", "/api/jira/refresh", "{}").await;
+    assert_eq!(status, 502, "{answer}");
+    assert_eq!(answer["error"], "tracon_unsupported");
 }
 
 #[tokio::test]

@@ -131,9 +131,11 @@ pub const OPS: &[Op] = &[
 pub const HTTP_ONLY: &[(&str, &str, &str)] = &[(
     "POST",
     "/api/jira/refresh",
-    "A refresh reads Jira through the node's operator route (`GET /api/jira/search`), so an \
-     agent's call would reach Jira as the operator. An agent that wants fresh Jira facts calls \
-     jira-review's `search` under its own policy instead.",
+    "A refresh reads Jira as Workboard itself: under Tracon it calls jira-review's `search` \
+     through the node as this plugin, a call the node never holds for a card, and standalone it \
+     runs jira-review with the person's own credential. An agent's call would borrow that \
+     access. An agent that wants fresh Jira facts calls jira-review's `search` under its own \
+     policy instead.",
 )];
 
 /// Tools that are deliberately not HTTP routes, each with why.

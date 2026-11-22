@@ -11,6 +11,10 @@
 //! answers only the operator's page (`tool = "tracon/ui"`, kind
 //! `operator`), so an agent never borrows the operator's identity through
 //! it.
+//!
+//! The manifest names the node method `tools/call`, so the node also passes
+//! `--node-socket <path>`: a refresh calls `jira-review__search` there as
+//! this plugin, on this instance's channel (see `jira`).
 
 use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::path::Path;
@@ -32,8 +36,8 @@ use serde_json::Value;
 use crate::{
     config::PluginConfig,
     contract::{self, ContractEnv, NonceCache},
-    http::{self, App, BODY_LIMIT, JiraChannel, JiraSite},
-    mcp,
+    http::{self, App, BODY_LIMIT, JiraSite},
+    jira, mcp,
     store::Store,
 };
 
@@ -46,6 +50,8 @@ pub const CONTEXT_HEADER: &str = "tracon-context";
 pub struct Gate {
     pub env: ContractEnv,
     pub nonces: NonceCache,
+    /// `TRACON_PLUGIN_TOKEN`, which the node socket takes as a bearer token.
+    pub token: String,
 }
 
 impl Gate {
@@ -64,13 +70,15 @@ impl Gate {
         Ok(Self {
             env: ContractEnv::new(&token, &key).map_err(|e| anyhow!(e))?,
             nonces: NonceCache::default(),
+            token,
         })
     }
 }
 
 /// The plugin-mode app for the board in `data`, configured by
-/// `<data>/plugin.toml`.
-pub fn app(data: &Path) -> Result<App> {
+/// `<data>/plugin.toml`. A refresh calls the node on `node_socket` with
+/// `token`.
+pub fn app(data: &Path, node_socket: Option<&Path>, token: &str) -> Result<App> {
     let config_path = data.join("plugin.toml");
     let config = PluginConfig::load(&config_path)?;
     let store = Arc::new(Store::open(data, config.jira_site.as_ref())?);
@@ -86,7 +94,11 @@ pub fn app(data: &Path) -> Result<App> {
     Ok(App {
         store,
         site,
-        tracon: config.tracon_url,
+        jira: jira::Source::Node {
+            socket: node_socket.map(Path::to_path_buf),
+            token: token.to_owned(),
+            profile: config.jira_profile,
+        },
         refresh_in_progress: Arc::new(AtomicBool::new(false)),
     })
 }
@@ -108,9 +120,9 @@ pub fn router(app: App, gate: Arc<Gate>) -> Router {
         .layer(middleware::from_fn_with_state(gate, check))
 }
 
-pub async fn run(socket: &Path, data: &Path) -> Result<()> {
+pub async fn run(socket: &Path, data: &Path, node_socket: Option<&Path>) -> Result<()> {
     let gate = Arc::new(Gate::from_env(|k| std::env::var(k).ok())?);
-    let app = app(data)?;
+    let app = app(data, node_socket, &gate.token)?;
     match std::fs::symlink_metadata(socket) {
         Ok(m) if m.file_type().is_socket() => {
             std::fs::remove_file(socket).with_context(|| socket.display().to_string())?;
@@ -179,7 +191,7 @@ async fn check(State(gate): State<Arc<Gate>>, request: Request, next: Next) -> R
         return next.run(request).await;
     }
     let meta = context(&request);
-    let (mut parts, body) = request.into_parts();
+    let (parts, body) = request.into_parts();
     let Ok(bytes) = axum::body::to_bytes(body, BODY_LIMIT).await else {
         return http::error(
             StatusCode::PAYLOAD_TOO_LARGE,
@@ -195,8 +207,7 @@ async fn check(State(gate): State<Arc<Gate>>, request: Request, next: Next) -> R
     let mut response =
         match contract::verify_ui(&meta, &arguments, &gate.env, now_ms(), &gate.nonces) {
             Err(refusal) => http::error(StatusCode::UNAUTHORIZED, "unauthorized", &refusal.reason),
-            Ok(caller) => {
-                parts.extensions.insert(JiraChannel(caller.channel));
+            Ok(_) => {
                 next.run(Request::from_parts(parts, Body::from(bytes)))
                     .await
             }
