@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.4.0](https://github.com/cosmicspork/workboard/compare/v0.3.0...v0.4.0) (2026-11-22)
+
+
+### ⚠ BREAKING CHANGES
+
+* refresh Jira through jira-review directly ([#9](https://github.com/cosmicspork/workboard/issues/9))
+
+### Features
+
+* refresh Jira through jira-review directly ([#9](https://github.com/cosmicspork/workboard/issues/9)) ([3eb3c12](https://github.com/cosmicspork/workboard/commit/3eb3c12927c7c56ddb6008db22eda4d5d48b8ce0))
+
 ## [0.3.0](https://github.com/cosmicspork/workboard/compare/v0.2.0...v0.3.0) (2026-11-21)
 
 
