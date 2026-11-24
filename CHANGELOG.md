@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/cosmicspork/workboard/compare/v0.4.0...v0.5.0) (2026-11-24)
+
+
+### Features
+
+* **spa:** build the page on Tracon's shared UI kit ([#14](https://github.com/cosmicspork/workboard/issues/14)) ([8782cf7](https://github.com/cosmicspork/workboard/commit/8782cf70b44895dbf4116feb1cd1a28d56c555f6))
+
 ## [0.4.0](https://github.com/cosmicspork/workboard/compare/v0.3.0...v0.4.0) (2026-11-22)
 
 
