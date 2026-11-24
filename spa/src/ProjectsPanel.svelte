@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Project, ProjectInput } from './lib/api';
   import { parseJiraKeys } from './lib/views';
+  import { Banner, Empty, Row, SideButton } from '@tracon/ui/svelte';
   let { projects, counts, onCreate, onUpdate, onMove, onDelete }: {
     projects: Project[];
     counts: Record<string, number>;
@@ -55,7 +56,7 @@
   function dateLabel(date: string) { return new Date(`${date}T12:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); }
 </script>
 
-{#if error}<div class="alert" role="alert">{error}</div>{/if}
+{#if error}<Banner tone="crit" role="alert">{error}</Banner>{/if}
 {#if projects.length}
   <ol class="project-list">
     {#each projects as project, index (project.id)}
@@ -66,36 +67,37 @@
             <div class="form-grid"><label>Name<input bind:value={name} maxlength="200" required /></label><label>Target date<input type="date" bind:value={targetOn} /></label></div>
             <label>Jira keys<input bind:value={keys} placeholder="APP-264, WEB-22, or a project key like APP" /></label>
             <p class="field-hint">An issue or epic key matches that issue and its children; a project key catches any remaining issue in that Jira project.</p>
-            <div class="editor-actions"><button type="button" class="quiet-button" onclick={() => editing = null}>Cancel</button><button type="submit" class="primary-button" disabled={busy}>Save project</button></div>
+            <div class="editor-actions"><button type="button" class="lnk" onclick={() => editing = null}>Cancel</button><button type="submit" class="btn p" disabled={busy}>Save project</button></div>
           </form>
         {:else}
-          <div class="project-main">
-            <button class="task-title" onclick={() => startEdit(project)}>{project.name}</button>
-            <div class="task-meta">
-              <span class="count-pill">{counts[project.id] ?? 0} open</span>
-              {#if project.target_on}<span class="review-tag">Target {dateLabel(project.target_on)}</span>{/if}
-              {#each project.jira_keys as key (key)}<span class="priority-tag">{key}</span>{/each}
+          <Row>
+            <div class="project-main">
+              <button class="task-title" onclick={() => startEdit(project)}>{project.name}</button>
+              <div class="task-meta">
+                <span>{counts[project.id] ?? 0} open</span>
+                {#if project.target_on}<span>target {dateLabel(project.target_on)}</span>{/if}
+                {#each project.jira_keys as key (key)}<span class="tag">{key}</span>{/each}
+              </div>
             </div>
-          </div>
-          <div class="row-trailing">
-            <button class="icon-button" aria-label={`Move ${project.name} up`} disabled={index === 0 || busy} onclick={() => move(index, -1)}>↑</button>
-            <button class="icon-button" aria-label={`Move ${project.name} down`} disabled={index === projects.length - 1 || busy} onclick={() => move(index, 1)}>↓</button>
             {#if confirming === project.id}
-              <button class="danger-button" onclick={() => run(() => onDelete(project))}>Delete</button><button class="quiet-button" onclick={() => confirming = null}>Keep</button>
-            {:else}
-              <button class="icon-button" aria-label={`Delete ${project.name}`} onclick={() => confirming = project.id}>×</button>
+              <span class="confirm"><span class="note">Delete {project.name}? Its tasks keep their state and lose the project.</span><button class="btn d" onclick={() => run(() => onDelete(project))}>Delete</button><button class="lnk" onclick={() => confirming = null}>Keep</button></span>
             {/if}
-          </div>
+            {#snippet actions()}
+              <SideButton label={`Move ${project.name} up`} disabled={index === 0 || busy} onclick={() => move(index, -1)}>↑</SideButton>
+              <SideButton label={`Move ${project.name} down`} disabled={index === projects.length - 1 || busy} onclick={() => move(index, 1)}>↓</SideButton>
+              <SideButton label={`Delete ${project.name}`} disabled={confirming === project.id} onclick={() => confirming = project.id}>×</SideButton>
+            {/snippet}
+          </Row>
         {/if}
       </li>
     {/each}
   </ol>
 {:else}
-  <div class="quiet-empty">No projects yet. Add your priorities in order; tasks group under them in Next, Waiting, and Later.</div>
+  <Empty>No projects yet. Add your priorities in order; tasks group under them in Next, Waiting, and Later.</Empty>
 {/if}
 <form class="add-panel project-add" onsubmit={create}>
-  <div class="panel-title"><div><p class="eyebrow">NEXT PRIORITY</p><h2>Add project</h2></div></div>
+  <div class="panel-title"><h2>Add project</h2></div>
   <div class="form-grid"><label>Name<input bind:value={newName} maxlength="200" required placeholder="App4adm to Kubernetes" /></label><label>Target date<input type="date" bind:value={newTarget} /></label></div>
   <label>Jira keys<input bind:value={newKeys} placeholder="APP-264, WEB-22, or a project key like APP" /></label>
-  <div class="editor-actions"><button type="submit" class="primary-button" disabled={busy}>Add project</button></div>
+  <div class="editor-actions"><button type="submit" class="btn" disabled={busy}>Add project</button></div>
 </form>

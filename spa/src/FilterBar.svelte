@@ -28,5 +28,5 @@
   {#each filter.tags as tag (tag)}<span class="tag-chip active-chip">{tag}<button type="button" aria-label={`Remove tag filter ${tag}`} onclick={() => removeTag(tag)}>×</button></span>{/each}
   <input class="tag-input" bind:value={draft} onkeydown={keydown} oninput={picked} list="known-tags" placeholder={filter.tags.length ? 'Add another tag' : 'Filter by tag, e.g. person:sam'} aria-label="Filter by tag" />
   <datalist id="known-tags">{#each tags as tag (tag)}<option value={tag}></option>{/each}</datalist>
-  {#if filter.tags.length}<button type="button" class="text-button" onclick={() => filter.tags = []}>Clear tags</button>{/if}
+  {#if filter.tags.length}<button type="button" class="lnk" onclick={() => filter.tags = []}>Clear tags</button>{/if}
 </div>
