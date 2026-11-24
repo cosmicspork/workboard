@@ -26,7 +26,7 @@ The sidebar mark and favicon share `spa/public/workboard.svg`. `bun run --cwd sp
 
 ## As a Tracon plugin
 
-Workboard also ships as a [Tracon](https://github.com/cosmicspork/tracon) plugin with a UI. Once a release exists, install it on a node with:
+Workboard also ships as a [Tracon](https://github.com/cosmicspork/tracon) plugin with a UI. Install it on a node with:
 
 ```sh
 tracon plugin add cosmicspork/workboard
@@ -46,7 +46,7 @@ Without `jira_site` the board works, Jira keys show without links, and **Refresh
 A refresh calls the [jira-review](https://github.com/cosmicspork/jira-review) plugin's `search` through the node, as Workboard: the manifest names the node method `tools/call`, and the node hands Workboard a socket for it (`--node-socket`). So jira-review must be installed on the node (`tracon plugin add cosmicspork/jira-review`), and the call runs on the instance's own channel with that channel's Jira credential:
 
 - Without `jira_profile`, the call carries no `profile` and is lent the channel's `jira` binding. With `jira_profile = "P"` it passes `profile: "P"` and is lent `jira-P` instead, which the channel must bind.
-- The node decides the call by its signed policy and jira-review's `[[plugin]]` entry, like any call, but a call from a plugin is never held for a card: one that would be asked is refused. The shipped working agreements (bundle v26) allow `jira-review__search` by name, so it runs with no configuration. On a node whose bundle does not, add `allow = ["search"]` to the `[[plugin]]` entry for `jira-review` in `node.toml`.
+- The node decides the call by its signed policy and jira-review's `[[plugin]]` entry, like any call, but a call from a plugin is never held for a card: one that would be asked is refused. The shipped working agreements (bundle v26 and later) allow `jira-review__search` by name, so it runs with no configuration. On a node whose bundle does not, add `allow = ["search"]` to the `[[plugin]]` entry for `jira-review` in `node.toml`.
 - A refusal or failure leaves the board as it was, shows the reason's kind on the page, and logs the node's full answer to the plugin log (`tracon plugin logs workboard`). The node logs the call on the channel under `plugin:workboard`.
 
 To move an existing standalone board into an instance, stop both, then copy `~/.local/share/workboard/workboard.sqlite3` and any `-wal`/`-shm` sidecars into the instance's `<data>` directory under the same names. Keep the files private (0600).
