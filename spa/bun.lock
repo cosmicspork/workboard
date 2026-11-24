@@ -4,6 +4,9 @@
   "workspaces": {
     "": {
       "name": "workboard-spa",
+      "dependencies": {
+        "@tracon/ui": "https://github.com/cosmicspork/tracon/releases/download/v0.61.0/tracon-ui-0.61.0.tgz",
+      },
       "devDependencies": {
         "@resvg/resvg-js": "2.6.2",
         "@sveltejs/vite-plugin-svelte": "7.3.0",
@@ -91,6 +94,8 @@
     "@sveltejs/load-config": ["@sveltejs/load-config@0.2.3", "", {}, "sha512-VT3qmUb8pRV2QrZjd8iAmtg8lf4W0TIjZbvXtz5MKei/q96teWZgGJyyidJzOjzZzvdq616eSRVeMYIQChUTAQ=="],
 
     "@sveltejs/vite-plugin-svelte": ["@sveltejs/vite-plugin-svelte@7.3.0", "", { "dependencies": { "deepmerge": "^4.3.1", "magic-string": "^1.0.0", "obug": "^2.1.0", "vitefu": "^1.1.2" }, "peerDependencies": { "svelte": "^5.46.4", "vite": "^8.0.0-beta.7 || ^8.0.0" } }, "sha512-QbRoJyD92e9R0ufeQIWRHrCC0ObcqSv/aBDdrQMoU+sypav3cDx5wytdQ6GLdXjEMO6xjrXGzfkUygng8JMv0A=="],
+
+    "@tracon/ui": ["@tracon/ui@https://github.com/cosmicspork/tracon/releases/download/v0.61.0/tracon-ui-0.61.0.tgz", { "peerDependencies": { "svelte": "^5.0.0" }, "optionalPeers": ["svelte"] }, "sha512-Y8IWbXHJv/kHWxESlGDN2b72mgY6P1om7EiGoK9OxqCl6ykKyknyEj+vn8zzhvLYOAdFTHoPv0l+r4S2lTwYCQ=="],
 
     "@types/bun": ["@types/bun@1.4.2", "", { "dependencies": { "bun-types": "1.4.2" } }, "sha512-GimotNn7+ZV0uVArItBbriZsR1oNf0+WTzPkdcFrzShI7k2norL0uzEaJT8T33dWr7O/c9ZDuAFQrctKCi72oQ=="],
 

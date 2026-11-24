@@ -5,7 +5,7 @@
   import TaskEditor from './TaskEditor.svelte';
   import TaskRow from './TaskRow.svelte';
   import { api, ApiError, refreshErrorText, type Board, type CreateTask, type Project, type ProjectInput, type State, type Task, type UpdateTask } from './lib/api';
-  import { applyTheme, loadTheme, THEMES, type Theme } from './lib/theme';
+  import { Banner, Empty, SectionHeader } from '@tracon/ui/svelte';
   import { filterTasks, groupByProject, inboxTasks, knownTags, laneTasks, navigationCounts, openCountsByProject, parseTags, reviewDueTasks, todayTasks, type Filter } from './lib/views';
 
   type View = State | 'morning' | 'projects';
@@ -37,8 +37,6 @@
   let addError = $state('');
   let mutationError = $state('');
   let adding = $state(false);
-  let theme = $state<Theme>(loadTheme());
-  $effect(() => applyTheme(theme));
 
   function loadFilter(): Filter {
     const empty = { query: '', projectId: '', tags: [] };
@@ -183,58 +181,64 @@
 </script>
 
 <svelte:head><title>{lanes.find(item => item.id === view)?.label} · Workboard</title></svelte:head>
+{#snippet rows(tasks: Task[], showProject = true)}
+  <div class="task-list">{#each tasks as task (task.id)}<TaskRow {task} today={board?.local_date ?? ''} projectName={showProject ? projectName(task) : null} onTag={addTagFilter} onEdit={() => editorTask = task} />{/each}</div>
+{/snippet}
 <div class="app-shell">
   <aside class="sidebar">
-    <a class="brand" href="#/morning" aria-label="Workboard home"><img class="brand-mark" src="./workboard.svg" alt="" width="29" height="29" /><span>workboard</span></a>
-    <p class="nav-label">YOUR BOARD</p>
     <nav aria-label="Workboard views">
       {#each lanes as lane (lane.id)}
         <a href={`#/${lane.id}`} class:active={view === lane.id} aria-current={view === lane.id ? 'page' : undefined}>
-          <span>{lane.label}</span>{#if lane.id !== 'morning'}<span class="nav-count">{counts()[lane.id]}</span>{/if}
+          <span>{lane.label}</span>{#if lane.id !== 'morning'}<span class="nav-count" class:waiting={lane.id === 'inbox' && counts().inbox > 0}>{counts()[lane.id]}</span>{/if}
         </a>
       {/each}
     </nav>
-    <div class="sidebar-bottom"><div class="sync-dot" class:syncing={board?.sync.refresh_in_progress || refreshBusy}></div><div><strong>Jira snapshot</strong><small>{board?.sync.last_success_at ? `Updated ${new Date(board.sync.last_success_at).toLocaleString()}` : 'Never refreshed'}</small></div></div>
+    <div class="sidebar-bottom"><span class="sync-dot" class:syncing={board?.sync.refresh_in_progress || refreshBusy}></span><div><strong>Jira snapshot</strong><small>{board?.sync.last_success_at ? `Updated ${new Date(board.sync.last_success_at).toLocaleString()}` : 'Never refreshed'}</small></div></div>
   </aside>
 
   <main class="main-content">
     <header class="topbar">
-      <div class="breadcrumbs">WORKBOARD <span>/</span> {lanes.find(item => item.id === view)?.label.toUpperCase()}</div>
-      <div class="top-actions"><div class="theme-toggle" role="radiogroup" aria-label="Color theme">{#each THEMES as option (option.id)}<button type="button" role="radio" aria-checked={theme === option.id} class:active={theme === option.id} title={option.id === 'auto' ? 'Follow system setting' : `${option.label} theme`} onclick={() => theme = option.id}>{option.label}</button>{/each}</div><button class="quiet-button" onclick={() => showAdd = !showAdd}>＋ Add task</button><button class="primary-button refresh-button" onclick={refreshJira} disabled={refreshBusy || board?.sync.refresh_in_progress}>{refreshBusy || board?.sync.refresh_in_progress ? 'Refreshing…' : '↻ Refresh Jira'}</button></div>
+      <button class="btn" onclick={() => showAdd = !showAdd}>＋ Add task</button>
+      <button class="btn" onclick={refreshJira} disabled={refreshBusy || board?.sync.refresh_in_progress}>{refreshBusy || board?.sync.refresh_in_progress ? 'Refreshing…' : '↻ Refresh Jira'}</button>
     </header>
     <div class="content-wrap">
-      {#if loadError}<div class="alert" role="alert"><strong>Could not load board</strong><span>{loadError}</span><button class="quiet-button" onclick={() => loadBoard(true)}>Try again</button></div>{/if}
-      {#if board?.sync.error_code}<div class="alert jira-alert" role="status"><span>{refreshErrorText(board.sync.error_code)}</span></div>{/if}
-      {#if mutationError}<div class="alert" role="alert">{mutationError}<button class="quiet-button" onclick={() => loadBoard()}>Reload board</button></div>{/if}
+      {#if loadError}<Banner tone="crit" role="alert" detail={loadError}>Could not load the board{#snippet action()}<button class="lnk" onclick={() => loadBoard(true)}>Try again</button>{/snippet}</Banner>{/if}
+      {#if board?.sync.error_code}<Banner tone="crit" role="status">{refreshErrorText(board.sync.error_code)}</Banner>{/if}
+      {#if mutationError}<Banner tone="crit" role="alert">{mutationError}{#snippet action()}<button class="lnk" onclick={() => loadBoard()}>Reload board</button>{/snippet}</Banner>{/if}
 
       {#if showAdd}
         <form class="add-panel" onsubmit={saveNew}>
-          <div class="panel-title"><div><p class="eyebrow">CAPTURE A COMMITMENT</p><h2>New task</h2></div><button class="icon-button" type="button" aria-label="Close new task form" onclick={() => showAdd = false}>×</button></div>
+          <div class="panel-title"><h2>New task</h2><button class="lnk" type="button" aria-label="Close new task form" onclick={() => showAdd = false}>Close</button></div>
           <label>Title<input bind:value={addTitle} maxlength="500" required placeholder="What needs doing?" /></label>
           <div class="form-grid"><label>Next action<input bind:value={addAction} maxlength="16384" placeholder="First concrete step (optional)" /></label><label>HTTPS or HTTP link<input bind:value={addLinkUrl} type="url" maxlength="2048" placeholder="https://…" /></label></div>
           {#if addLinkUrl}<label>Link label<input bind:value={addLinkLabel} maxlength="200" placeholder="Optional display label" /></label>{/if}
           <div class="form-grid"><label>Project<select bind:value={addProject}><option value="">No project</option>{#each projects() as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><label>Tags<input bind:value={addTags} maxlength="1400" placeholder="person:sam, kind:ops" /></label></div>
           <label>Notes<textarea bind:value={addNotes} maxlength="16384" rows="3"></textarea></label>
-          {#if addError}<p class="form-error" role="alert">{addError}</p>{/if}
-          <div class="editor-actions"><button class="quiet-button" type="button" onclick={() => showAdd = false}>Cancel</button><button class="primary-button" type="submit" disabled={adding}>{adding ? 'Adding…' : 'Add to Inbox'}</button></div>
+          {#if addError}<Banner tone="crit" role="alert">{addError}</Banner>{/if}
+          <div class="editor-actions"><button class="lnk" type="button" onclick={() => showAdd = false}>Cancel</button><button class="btn p" type="submit" disabled={adding}>{adding ? 'Adding…' : 'Add to Inbox'}</button></div>
         </form>
       {/if}
 
-      {#if loading && !board}<div class="loading">Loading your board…</div>
+      {#if loading && !board}<Empty loading>Loading your board…</Empty>
       {:else if view === 'morning'}
-        <section class="page-heading"><div><p class="eyebrow">{board?.local_date ? relativeDay(board.local_date) : ''}</p><h1>Good morning<span>.</span></h1><p class="subheading">A clear view of what matters today.</p></div><button class="date-chip" type="button" aria-label="Today's date">◷ {board?.local_date}</button></section>
+        <section class="page-heading"><h1>Good morning</h1><span class="date">{board?.local_date ?? ''}</span><p class="subheading">A clear view of what matters today.</p></section>
         <FilterBar bind:filter projects={projects()} tags={tagOptions()} label="Search morning tasks" />
-        <section class="morning-section"><div class="section-heading"><div><span class="section-kicker">FOCUS</span><h2>Today <span class="count-pill">{morningToday().length}</span></h2></div><a href="#/next">Manage Next <span aria-hidden="true">↗</span></a></div>
-          {#if morningToday().length}<div class="task-list">{#each morningToday() as task (task.id)}<TaskRow {task} projectName={projectName(task)} onTag={addTagFilter} onEdit={() => editorTask = task} />{/each}</div>
-          {:else}<div class="empty-state"><span class="empty-icon">✳</span><div><strong>No focus items yet</strong><p>Choose tasks from Next to put them in Today.</p></div><a class="text-link" href="#/next">Explore Next →</a></div>{/if}
+        <section class="morning-section">
+          <SectionHeader detail={morningToday().length}>Today{#snippet aside()}<a class="lnk" href="#/next">Manage Next</a>{/snippet}</SectionHeader>
+          {#if morningToday().length}{@render rows(morningToday())}
+          {:else}<Empty>No focus items yet. Choose tasks from Next to put them in Today.{#snippet action()}<a class="lnk" href="#/next">Explore Next</a>{/snippet}</Empty>{/if}
         </section>
-        <section class="morning-section"><div class="section-heading"><div><span class="section-kicker">RESURFACING</span><h2>Review due <span class="count-pill">{morningDue().length}</span></h2></div><span class="muted">Waiting and Later commitments</span></div>
-          {#if morningDue().length}<div class="task-list">{#each morningDue() as task (task.id)}<TaskRow {task} projectName={projectName(task)} onTag={addTagFilter} onEdit={() => editorTask = task} />{/each}</div>
-          {:else}<div class="quiet-empty">Nothing needs review today.</div>{/if}
+        <section class="morning-section">
+          <SectionHeader detail={morningDue().length}>Review due{#snippet aside()}<span class="note">Waiting and Later commitments</span>{/snippet}</SectionHeader>
+          {#if morningDue().length}{@render rows(morningDue())}
+          {:else}<Empty>Nothing needs review today.</Empty>{/if}
         </section>
-        <section class="inbox-preview"><div><span class="section-kicker">TO SORT</span><h2>Inbox <span class="count-pill">{counts().inbox}</span></h2><p>Untriaged work, kept out of your focus list.</p></div><a class="primary-button" href="#/inbox">Review inbox →</a></section>
+        <section class="morning-section">
+          <SectionHeader detail={counts().inbox}>Inbox{#snippet aside()}<a class="lnk" href="#/inbox">Review inbox</a>{/snippet}</SectionHeader>
+          <p class="note">Untriaged work, kept out of your focus list.</p>
+        </section>
       {:else}
-        <section class="page-heading lane-heading"><div><p class="eyebrow">{view === 'projects' ? 'YOUR PRIORITIES' : 'YOUR COMMITMENTS'}</p><h1>{lanes.find(item => item.id === view)?.label}<span>.</span></h1><p class="subheading">{subheading()}</p></div></section>
+        <section class="page-heading"><h1>{lanes.find(item => item.id === view)?.label}</h1><p class="subheading">{subheading()}</p></section>
         {#if view === 'projects'}
           <ProjectsPanel
             projects={projects()}
@@ -247,19 +251,20 @@
           <FilterBar bind:filter projects={projects()} tags={tagOptions()} label="Search tasks" />
           {#if view === 'inbox'}
             {@const tasks = inboxVisible()}
-            {#if tasks.length}<div class="bulk-toolbar"><label class="check-label"><input type="checkbox" checked={selectedVisible(tasks).length === tasks.length && tasks.length > 0} onchange={() => toggleAll(tasks)} /> Select all visible</label><span>{selectedVisible(tasks).length} selected</span>{#if selectedVisible(tasks).length}<label class="bulk-date">Project <select bind:value={assignTarget}><option value="">No project</option>{#each projects() as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><button class="quiet-button" onclick={bulkAssign}>Assign project</button><label class="bulk-date">Review date <input type="date" bind:value={reviewDate} /></label><button class="quiet-button" onclick={() => bulk('next')}>Move to Next</button><button class="quiet-button" onclick={() => bulk('later')}>Move to Later</button><button class="danger-button" onclick={() => bulk('done')}>Dismiss to Done</button>{/if}</div>
-              <div class="task-list">{#each tasks as task (task.id)}<TaskRow {task} projectName={projectName(task)} onTag={addTagFilter} selectable selected={selected.includes(task.id)} onSelect={() => toggleSelected(task.id)} onEdit={() => editorTask = task} />{/each}</div>
-            {:else}<div class="large-empty"><span>✓</span><h2>{filterActive() ? 'No matching tasks' : 'Inbox is clear'}</h2><p>{filterActive() ? 'Try changing your search, project, or tag filter.' : 'New Jira issues and personal tasks will arrive here.'}</p>{#if !filterActive()}<button class="primary-button" onclick={() => showAdd = true}>＋ Add a task</button>{/if}</div>{/if}
+            {#if tasks.length}<div class="bulk-toolbar"><label class="check-label"><input type="checkbox" checked={selectedVisible(tasks).length === tasks.length && tasks.length > 0} onchange={() => toggleAll(tasks)} /> Select all visible</label><span class="note">{selectedVisible(tasks).length} selected</span>{#if selectedVisible(tasks).length}<label class="bulk-date">Project <select bind:value={assignTarget}><option value="">No project</option>{#each projects() as project (project.id)}<option value={project.id}>{project.name}</option>{/each}</select></label><button class="btn" onclick={bulkAssign}>Assign project</button><label class="bulk-date">Review date <input type="date" bind:value={reviewDate} /></label><button class="btn" onclick={() => bulk('next')}>Move to Next</button><button class="btn" onclick={() => bulk('later')}>Move to Later</button><button class="lnk" onclick={() => bulk('done')}>Dismiss to Done</button>{/if}</div>
+              <div class="task-list">{#each tasks as task (task.id)}<TaskRow {task} today={board?.local_date ?? ''} projectName={projectName(task)} onTag={addTagFilter} selectable selected={selected.includes(task.id)} onSelect={() => toggleSelected(task.id)} onEdit={() => editorTask = task} />{/each}</div>
+            {:else}<Empty>{filterActive() ? 'No matching tasks. Try changing your search, project, or tag filter.' : 'Inbox is clear. New Jira issues and personal tasks will arrive here.'}{#snippet action()}{#if !filterActive()}<button class="lnk" onclick={() => showAdd = true}>Add a task</button>{/if}{/snippet}</Empty>{/if}
           {:else}
             {@const tasks = shownTasks()}
             {#if tasks.length && grouped.includes(view)}
               {#each groupByProject(tasks, projects()) as group (group.project?.id ?? 'none')}
-                <section class="project-group"><div class="section-heading"><div><span class="section-kicker">{group.project ? `PRIORITY ${rank(group.project)}` : 'UNSORTED'}</span><h2>{group.project?.name ?? 'No project'} <span class="count-pill">{group.tasks.length}</span></h2></div>{#if group.project?.target_on}<span class="review-tag">Target {relativeDay(group.project.target_on)}</span>{/if}</div>
-                  <div class="task-list">{#each group.tasks as task (task.id)}<TaskRow {task} onTag={addTagFilter} onEdit={() => editorTask = task} />{/each}</div>
+                <section class="project-group">
+                  <SectionHeader detail={group.tasks.length}>{group.project?.name ?? 'No project'}{#snippet aside()}<span class="mono">{group.project ? `priority ${rank(group.project)}` : 'unsorted'}{group.project?.target_on ? ` · target ${relativeDay(group.project.target_on)}` : ''}</span>{/snippet}</SectionHeader>
+                  {@render rows(group.tasks, false)}
                 </section>
               {/each}
-            {:else if tasks.length}<div class="task-list">{#each tasks as task (task.id)}<TaskRow {task} projectName={projectName(task)} onTag={addTagFilter} onEdit={() => editorTask = task} />{/each}</div>
-            {:else}<div class="large-empty"><span>{view === 'done' ? '✓' : '↗'}</span><h2>{filterActive() ? 'No matching tasks' : `Nothing in ${lanes.find(item => item.id === view)?.label}`}</h2><p>{filterActive() ? 'Try changing your search, project, or tag filter.' : 'Tasks you move here will stay until you choose another state.'}</p>{#if view === 'next'}<button class="primary-button" onclick={() => showAdd = true}>＋ Add a task</button>{/if}</div>{/if}
+            {:else if tasks.length}{@render rows(tasks)}
+            {:else}<Empty>{filterActive() ? 'No matching tasks. Try changing your search, project, or tag filter.' : `Nothing in ${lanes.find(item => item.id === view)?.label}. Tasks you move here will stay until you choose another state.`}{#snippet action()}{#if view === 'next' && !filterActive()}<button class="lnk" onclick={() => showAdd = true}>Add a task</button>{/if}{/snippet}</Empty>{/if}
           {/if}
         {/if}
       {/if}
